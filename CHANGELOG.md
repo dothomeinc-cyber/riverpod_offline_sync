@@ -1,83 +1,108 @@
-# Changelog
-
-## 1.0.0
+## 1.0.2
 
 ### 🚀 New Features
 - Added `OfflineSyncInitializer` for safe, race-condition-free initialization
 - Added `syncStatusTextProvider` for UI-friendly sync status text
-- Added `valueOrNull`, `isLoading`, `hasError`, `errorValue` extensions to `AsyncValue`
-- Added `SyncMachineState.isPulling` and `isPushing` getters
-- Added `OfflineLogger` for production-ready logging
+- Added `AsyncValue` extensions:
+  - `valueOrNull`
+  - `isLoading`
+  - `hasError`
+  - `errorValue`
+- Added `SyncMachineState` helper getters:
+  - `isPulling`
+  - `isPushing`
+- Added `OfflineLogger` for structured logging
+- Added deep merge conflict resolution for nested maps and lists
+- Added queue concurrency support with `maxConcurrentOperations`
+- Added WiFi-only synchronization mode
+- Added queue size limiting with automatic trimming
+- Added upload lifecycle controls:
+  - pause
+  - resume
+  - cancel
+- Added real-time sync progress streams
+- Added queue breakdown metrics for debugging
+- Added provider disposal cleanup using `ref.onDispose`
+- Added improved debug tooling and inspection utilities
 
 ### 🐛 Bug Fixes
-- Fixed race condition in provider initialization (QueueManager, ConnectivityMonitor)
+- Fixed race condition in provider initialization (`QueueManager`, `ConnectivityMonitor`)
 - Fixed duplicate listener registration in `OfflineToast`
-- Fixed `DebugPanel` extension constructor error (now uses properties directly)
-- Fixed `IdempotencyKey.isValid()` to handle both pure UUID and composite keys
-- Fixed `SyncStateMachine` state transition flow (pull → push, not push → pull)
-- Fixed `FirestoreSync` to use `OfflineLogger` instead of `print()`
-- Fixed memory leak by adding proper `ref.onDispose` in providers
+- Fixed `DebugPanel` extension misuse error
+- Fixed `IdempotencyKey.isValid()` to support UUID and composite keys
+- Fixed `SyncStateMachine` transition order
+- Fixed `FirestoreSync` using `print()` instead of `OfflineLogger`
+- Fixed memory leaks in providers and stream subscriptions
+- Fixed queue retry scheduling edge cases
+- Fixed adapter re-registration issues in Hive
+- Fixed connectivity stream handling for latest `connectivity_plus`
+- Fixed duplicate operation handling during retries
+- Fixed queue persistence restoration after app restart
 
 ### 🔧 Improvements
-- Replaced `print()` statements with `OfflineLogger` throughout the package
-- Added `maxQueueSize` enforcement with automatic queue trimming
-- Added `syncOnWiFiOnly` constraint checking before sync operations
-- Added `maxConcurrentOperations` support for batch queue processing
-- Added deep merge for conflict resolution (nested maps and lists)
-- Added pause/resume/cancel support for `StorageQueue` uploads
-- Improved error messages and logging context
+- Replaced `print()` statements with `OfflineLogger`
+- Improved retry orchestration and exponential backoff handling
+- Improved queue batching and concurrent processing
+- Improved sync lifecycle orchestration
+- Improved Riverpod integration and provider ergonomics
+- Improved error messages and debugging output
+- Improved metrics persistence and reporting
+- Improved upload tracking and progress monitoring
+- Improved connectivity-aware synchronization
+- Improved conflict merge logic with recursive resolution
+- Improved offline UI components and developer experience
+- Improved sync metrics visualization in `DebugPanel`
 
 ### ⚠️ Breaking Changes
-- **Removed `riverpod_offline_sync_base.dart`** - Use `OfflineSyncInitializer` instead
-- **Removed `QueueStore`** - Functionality merged into `QueueManager` (redundant)
-- **Provider types changed** - `queueManagerProvider` and `connectivityMonitorProvider` now use `FutureProvider`
-- **Must call `OfflineSyncInitializer.initialize()` before `runApp()`** - Required for proper initialization
+- Removed `riverpod_offline_sync_base.dart`
+  - Use `OfflineSyncInitializer` instead
+- Removed `QueueStore`
+  - Functionality merged into `QueueManager`
+- `queueManagerProvider` now uses `FutureProvider`
+- `connectivityMonitorProvider` now uses `FutureProvider`
+- `OfflineSyncInitializer.initialize()` must be called before `runApp()`
 
 ### 📦 Dependencies
-- Added `uuid: ^4.2.0` for better idempotency key generation
-- Added `synchronized: ^3.1.0` for mutex locks
+- Added `uuid: ^4.2.0`
+- Added `synchronized: ^3.1.0`
+- Updated `connectivity_plus`
+- Updated Firebase dependencies
 - Updated minimum Flutter SDK to `>=3.0.0`
 
 ### 📚 Documentation
 - Added complete API documentation
-- Added usage examples in `example/` folder
-- Added migration guide from v1.0.0 to v1.0.1
+- Added detailed README with examples
+- Added troubleshooting guide
+- Added architecture overview
+- Added usage examples in `/example`
+- Added migration notes
+- Added provider documentation
+- Added Firebase integration examples
 
 ### 🧪 Testing
 - Added unit tests for `IdempotencyKey`
 - Added unit tests for `QueueManager`
 - Added unit tests for `ConflictResolver`
+- Added retry handling tests
+- Added queue persistence tests
+- Added sync lifecycle tests
 
 ---
 
-## [1.0.0] - 2024-01-01
+## 1.0.0
 
 ### Initial Release
 - 🚀 Offline-first sync engine for Flutter
-- 📦 Queue management with priorities (critical, high, normal, low, background)
-- 🔄 Bi-directional sync layer
-- 📱 Riverpod integration with providers
-- 🔌 Connectivity monitoring (WiFi/Cellular/Offline)
+- 📦 Queue management with priorities
+- 🔄 Bi-directional synchronization
+- 📱 Riverpod integration
+- 🔌 Connectivity monitoring
 - ⚡ Smart retry with exponential backoff
-- 🎯 Idempotency key support (prevents duplicates)
-- 💾 Persistent queue across app restarts (Hive)
-- 🎨 Ready-to-use UI components:
-  - `ConnectivityBanner` - Displays offline status
-  - `SyncStatusIndicator` - Shows pending operations
-  - `SyncProgressBar` - Visual sync progress
-  - `OfflineToast` - Toast notifications
-  - `DebugPanel` - Debug and inspection tools
-- 🔥 Firebase integration:
-  - Firestore offline persistence
-  - Storage upload queue with retry
-  - Auth state persistence
-- ⚔️ Conflict resolution strategies:
-  - Server wins
-  - Client wins
-  - Merge
-  - Last write wins
-  - Manual resolve
-- 🎨 Customizable theme support (`authTheme`)
-- 🧩 `SyncAwareMixin` for easy integration
+- 🎯 Idempotency key support
+- 💾 Persistent queue using Hive
+- 🎨 Built-in offline UI components
+- 🔥 Firebase integration
+- ⚔️ Conflict resolution strategies
+- 🧩 `SyncAwareMixin`
 - 📊 Sync metrics and monitoring
-- 🔍 Debug tools for QA/Testing
+- 🔍 Debug tools and inspection utilities
