@@ -10,14 +10,21 @@ A production-ready offline-first sync engine for Flutter with Riverpod state man
 
 ## Table of Contents
 
-- [Features](#features)
+- [Features](#-features)
 - [Dependencies](#dependencies)
-- [Quick Start](#quick-start)
-  - [1. Initialize in main()](#1-initialize-in-main)
-  - [2. Register Operation Handlers](#2-register-operation-handlers)
+- [Quick Start with Firebase](#quick-start-with-firebase)
+  - [1. Complete Setup in main()](#1-complete-setup-in-main)
+  - [2. Register All Operation Handlers](#2-register-all-operation-handlers)
   - [3. Wrap Your App](#3-wrap-your-app)
   - [4. Submit Offline Operations](#4-submit-offline-operations)
-- [Architecture](#architecture)
+- [Complete Firebase Integration](#complete-firebase-integration)
+  - [Firestore Operations](#firestore-operations)
+  - [Firebase Storage Uploads](#firebase-storage-uploads)
+  - [Firebase Auth Persistence](#firebase-auth-persistence)
+  - [Real-time Firestore + Offline Queue](#real-time-firestore--offline-queue)
+- [Complete Service Class Example](#complete-service-class-example)
+- [Complete Todo App Example](#complete-todo-app-example)
+- [Architecture](#%EF%B8%8F-architecture)
 - [Core Concepts](#core-concepts)
   - [Queue Priorities](#queue-priorities)
   - [Queue Categories](#queue-categories)
@@ -25,19 +32,7 @@ A production-ready offline-first sync engine for Flutter with Riverpod state man
   - [Conflict Resolution](#conflict-resolution)
 - [Providers](#providers)
 - [Methods](#methods)
-  - [OfflineSyncLayer](#offlinesynclayer)
-  - [QueueManager](#queuemanager)
-  - [StorageQueue](#storagequeue)
 - [UI Components](#ui-components)
-  - [ConnectivityBanner](#connectivitybanner)
-  - [SyncStatusIndicator](#syncstatusindicator)
-  - [SyncProgressBar](#syncprogressbar)
-  - [OfflineToast](#offlinetoast)
-  - [DebugPanel](#debugpanel)
-- [Firebase Integration](#firebase-integration)
-  - [Firestore](#firestore)
-  - [Firebase Storage](#firebase-storage)
-  - [Firebase Auth](#firebase-auth)
 - [Configuration](#configuration)
 - [Metrics & Analytics](#metrics--analytics)
 - [Retry System](#retry-system)
@@ -45,12 +40,13 @@ A production-ready offline-first sync engine for Flutter with Riverpod state man
 - [Utilities](#utilities)
 - [Examples](#examples)
 - [Debugging](#debugging)
+- [Troubleshooting](#troubleshooting)
 - [FAQ](#faq)
 - [License](#license)
 
 ---
 
-# ✨ Features
+## ✨ Features
 
 - 🔄 Bi-directional sync (push + pull)
 - 📦 Persistent offline queue (Hive)
@@ -63,7 +59,7 @@ A production-ready offline-first sync engine for Flutter with Riverpod state man
 - 📊 Sync metrics & analytics
 - 🛠 Debug inspection tools
 - 🎨 Built-in UI widgets
-- 🔥 Firebase integrations
+- 🔥 Full Firebase integrations (Firestore, Storage, Auth)
 - 🧩 Riverpod integration
 - 📱 Offline-first architecture
 - 🚀 Queue survives app restarts
@@ -73,7 +69,7 @@ A production-ready offline-first sync engine for Flutter with Riverpod state man
 
 ---
 
-# Dependencies
+## Dependencies
 
 Add the following to your `pubspec.yaml`:
 
@@ -81,9 +77,14 @@ Add the following to your `pubspec.yaml`:
 dependencies:
   riverpod_offline_sync: ^0.1.0
   flutter_riverpod: ^2.5.0
+  firebase_core: ^2.24.0
+  cloud_firestore: ^4.17.0
+  firebase_storage: ^11.6.0
+  firebase_auth: ^4.17.0
   hive_flutter: ^1.1.0
   connectivity_plus: ^5.0.0
   synchronized: ^3.1.0
+  http: ^1.1.0
 ```
 
 Then run:
@@ -94,25 +95,40 @@ flutter pub get
 
 ---
 
-# Quick Start
+## Quick Start with Firebase
 
-## 1. Initialize in main()
+### 1. Complete Setup in main()
 
 ```dart
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:riverpod_offline_sync/riverpod_offline_sync.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // Initialize Firebase
+  await Firebase.initializeApp();
+
+  // Enable Firestore native offline persistence
+  await FirebaseFirestore.instance.settings =
+      const Settings(persistenceEnabled: true);
+
+  // Initialize offline sync layer
   await OfflineSyncLayer.instance.initialize(
     config: const SyncConfig(
       autoSyncOnReconnect: true,
       syncImmediately: true,
       maxConcurrentOperations: 3,
+      enableMetrics: true,
+      enableDebugLogging: false,
     ),
   );
+
+  // Register ALL operation handlers
+  _registerHandlers();
 
   runApp(const ProviderScope(child: MyApp()));
 }
@@ -120,85 +136,787 @@ void main() async {
 
 ---
 
-## 2. Register Operation Handlers
+### 2. Register All Operation Handlers
 
 ```dart
-OfflineSyncLayer.instance.registerOperationHandler(
-  'orders',
-  (data) async {
-    await api.createOrder(data);
-  },
+void _registerHandlers() {
+  final sync = OfflineSyncLayer.instance;
+
+  // ✅ CREATE / SET document handler
+  sync.registerOperationHandler('firestore_set', (data) async {
+    await FirebaseFirestore.instance
+        .collection(data['collection'])
+        .doc(data['docId'])
+        .set(Map<String, dynamic>.from(data['payload']));
+  });
+
+  // ✅ UPDATE document handler
+  sync.registerOperationHandler('firestore_update', (data) async {
+    await FirebaseFirestore.instance
+        .collection(data['collection'])
+        .doc(data['docId'])
+        .update(Map<String, dynamic>.from(data['payload']));
+  });
+
+  // ✅ DELETE document handler
+  sync.registerOperationHandler('firestore_delete', (data) async {
+    await FirebaseFirestore.instance
+        .collection(data['collection'])
+        .doc(data['docId'])
+        .delete();
+  });
+
+  // ✅ Batch write handler
+  sync.registerOperationHandler('firestore_batch', (data) async {
+    final batch = FirebaseFirestore.instance.batch();
+    final writes = List<Map<String, dynamic>>.from(data['writes']);
+
+    for (final write in writes) {
+      final docRef = FirebaseFirestore.instance
+          .collection(write['collection'])
+          .doc(write['docId']);
+
+      switch (write['type']) {
+        case 'set':
+          batch.set(docRef, write['data']);
+          break;
+        case 'update':
+          batch.update(docRef, write['data']);
+          break;
+        case 'delete':
+          batch.delete(docRef);
+          break;
+      }
+    }
+
+    await batch.commit();
+  });
+
+  // ✅ Custom REST API handler
+  sync.registerOperationHandler('api_request', (data) async {
+    final response = await http.post(
+      Uri.parse(data['url']),
+      body: data['body'],
+      headers: data['headers'],
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('API request failed: ${response.statusCode}');
+    }
+
+    return response.body;
+  });
+
+  // ✅ Analytics handler (low priority)
+  sync.registerOperationHandler('analytics', (data) async {
+    await AnalyticsService.trackEvent(
+      data['event_name'],
+      properties: data['properties'],
+    );
+  });
+}
+```
+
+---
+
+### 3. Wrap Your App
+
+```dart
+class MyApp extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Offline-First App',
+      home: ConnectivityBanner(
+        child: OfflineToast(
+          child: HomePage(),
+        ),
+      ),
+    );
+  }
+}
+```
+
+---
+
+### 4. Submit Offline Operations
+
+```dart
+// ✅ CREATE document (works offline)
+Future<void> createUser(String userId, String name, String email) async {
+  await OfflineSyncLayer.instance.submitOperation(
+    category: 'firestore_set',
+    priority: QueuePriority.high.value,
+    idempotencyKey: 'set_user_${userId}_${DateTime.now().millisecondsSinceEpoch}',
+    data: {
+      'collection': 'users',
+      'docId': userId,
+      'payload': {
+        'name': name,
+        'email': email,
+        'createdAt': DateTime.now().toIso8601String(),
+        'updatedAt': DateTime.now().toIso8601String(),
+      },
+    },
+  );
+}
+
+// ✅ UPDATE document (works offline)
+Future<void> updateUser(String userId, Map<String, dynamic> updates) async {
+  await OfflineSyncLayer.instance.submitOperation(
+    category: 'firestore_update',
+    priority: QueuePriority.normal.value,
+    idempotencyKey: IdempotencyKey.generate(),
+    data: {
+      'collection': 'users',
+      'docId': userId,
+      'payload': {
+        ...updates,
+        'updatedAt': DateTime.now().toIso8601String(),
+      },
+    },
+  );
+}
+
+// ✅ DELETE document (works offline)
+Future<void> deleteUser(String userId) async {
+  await OfflineSyncLayer.instance.submitOperation(
+    category: 'firestore_delete',
+    priority: QueuePriority.high.value,
+    idempotencyKey: 'delete_user_${userId}_${DateTime.now().millisecondsSinceEpoch}',
+    data: {
+      'collection': 'users',
+      'docId': userId,
+    },
+  );
+}
+```
+
+---
+
+## Complete Firebase Integration
+
+### Firestore Operations
+
+```dart
+class OfflineFirestoreService {
+  static Future<void> submitOperation({
+    required String category,
+    required Map<String, dynamic> data,
+    QueuePriority priority = QueuePriority.normal,
+    String? customIdempotencyKey,
+  }) async {
+    await OfflineSyncLayer.instance.submitOperation(
+      category: category,
+      priority: priority.value,
+      idempotencyKey: customIdempotencyKey ?? IdempotencyKey.generate(),
+      data: data,
+    );
+  }
+
+  static Future<void> setDocument({
+    required String collection,
+    required String docId,
+    required Map<String, dynamic> data,
+  }) async {
+    await submitOperation(
+      category: 'firestore_set',
+      priority: QueuePriority.high,
+      data: {'collection': collection, 'docId': docId, 'payload': data},
+    );
+  }
+
+  static Future<void> updateDocument({
+    required String collection,
+    required String docId,
+    required Map<String, dynamic> updates,
+  }) async {
+    await submitOperation(
+      category: 'firestore_update',
+      priority: QueuePriority.normal,
+      data: {'collection': collection, 'docId': docId, 'payload': updates},
+    );
+  }
+
+  static Future<void> deleteDocument({
+    required String collection,
+    required String docId,
+  }) async {
+    await submitOperation(
+      category: 'firestore_delete',
+      priority: QueuePriority.high,
+      data: {'collection': collection, 'docId': docId},
+    );
+  }
+
+  static Future<void> batchWrite({
+    required List<Map<String, dynamic>> operations,
+  }) async {
+    await submitOperation(
+      category: 'firestore_batch',
+      priority: QueuePriority.high,
+      data: {'writes': operations},
+    );
+  }
+}
+
+// Usage
+await OfflineFirestoreService.setDocument(
+  collection: 'products',
+  docId: 'prod_001',
+  data: {'name': 'Laptop', 'price': 999},
 );
 
-OfflineSyncLayer.instance.registerOperationHandler(
-  'messages',
-  (data) async {
-    await api.sendMessage(data);
-  },
+await OfflineFirestoreService.updateDocument(
+  collection: 'products',
+  docId: 'prod_001',
+  updates: {'price': 899},
+);
+
+await OfflineFirestoreService.batchWrite(
+  operations: [
+    {'type': 'update', 'collection': 'products', 'docId': 'prod_001', 'data': {'stock': 5}},
+    {'type': 'set', 'collection': 'orders', 'docId': 'order_001', 'data': {'productId': 'prod_001'}},
+  ],
 );
 ```
 
 ---
 
-## 3. Wrap Your App
+### Firebase Storage Uploads
 
 ```dart
-MaterialApp(
-  home: ConnectivityBanner(
-    child: OfflineToast(
-      child: HomePage(),
-    ),
-  ),
-)
+final storageQueue = StorageQueue();
+
+// Upload a file with full queue support
+Future<void> uploadUserPhoto(File file, String userId) async {
+  final idempotencyKey = IdempotencyKey.generate();
+
+  await storageQueue.uploadFile(
+    file: file,
+    path: 'uploads/$userId/photo.jpg',
+    idempotencyKey: idempotencyKey,
+  );
+
+  // Control the upload
+  storageQueue.pauseUpload(idempotencyKey);
+  storageQueue.resumeUpload(idempotencyKey);
+  storageQueue.cancelUpload(idempotencyKey);
+
+  // Track progress
+  storageQueue.progressStream.listen((progress) {
+    if (progress.key == idempotencyKey) {
+      print('Upload progress: ${progress.percentage}%');
+      print('Uploaded: ${progress.bytesUploaded}/${progress.totalBytes}');
+    }
+  });
+}
+
+// Upload multiple files
+Future<void> uploadMultipleFiles(List<File> files, String userId) async {
+  for (final file in files) {
+    await storageQueue.uploadFile(
+      file: file,
+      path: 'uploads/$userId/${DateTime.now().millisecondsSinceEpoch}.jpg',
+      idempotencyKey: IdempotencyKey.generate(),
+    );
+  }
+}
 ```
 
 ---
 
-## 4. Submit Offline Operations
+### Firebase Auth Persistence
 
 ```dart
-await OfflineSyncLayer.instance.submitOperation(
-  category: 'orders',
-  priority: QueuePriority.high.value,
-  data: {
-    'product': 'Laptop',
-    'quantity': 1,
-    'price': 999.99,
-  },
-);
+final auth = AuthPersistence();
+
+// Sign in (works offline - stores credentials)
+await auth.signInWithEmail('email@example.com', 'password');
+
+// Check auth state
+final user = auth.currentUser;
+if (user != null) {
+  print('Signed in as: ${user.email}');
+}
 ```
 
 ---
 
-# 🏗 Architecture
+### Real-time Firestore + Offline Queue
 
-```text
+```dart
+// Provider for real-time Firestore data
+final usersProvider = StreamProvider.autoDispose<List<User>>((ref) {
+  return FirebaseFirestore.instance
+      .collection('users')
+      .snapshots()
+      .map((snapshot) => snapshot.docs
+          .map((doc) => User.fromFirestore(doc))
+          .toList());
+});
+
+class UserListPage extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final usersAsync = ref.watch(usersProvider);
+    final pendingCount = ref.watch(pendingItemsCountProvider).valueOrNull ?? 0;
+    final isSyncing = ref.watch(isSyncingProvider);
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Users'),
+        actions: [
+          if (pendingCount > 0)
+            Stack(
+              children: [
+                Icon(Icons.sync),
+                Positioned(
+                  right: 0,
+                  top: 0,
+                  child: Container(
+                    padding: EdgeInsets.all(2),
+                    decoration: BoxDecoration(
+                      color: Colors.red,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    constraints: BoxConstraints(minWidth: 16, minHeight: 16),
+                    child: Text(
+                      '$pendingCount',
+                      style: TextStyle(color: Colors.white, fontSize: 10),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+        ],
+      ),
+      body: Stack(
+        children: [
+          usersAsync.when(
+            data: (users) => ListView.builder(
+              itemCount: users.length,
+              itemBuilder: (context, index) {
+                return ListTile(
+                  title: Text(users[index].name),
+                  subtitle: Text(users[index].email),
+                  trailing: IconButton(
+                    icon: Icon(Icons.delete),
+                    onPressed: () async {
+                      await OfflineFirestoreService.deleteDocument(
+                        collection: 'users',
+                        docId: users[index].id,
+                      );
+                    },
+                  ),
+                );
+              },
+            ),
+            loading: () => Center(child: CircularProgressIndicator()),
+            error: (err, stack) => Center(child: Text('Error: $err')),
+          ),
+          if (isSyncing)
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: LinearProgressIndicator(),
+            ),
+        ],
+      ),
+      floatingActionButton: FloatingActionButton(
+        child: Icon(Icons.add),
+        onPressed: () async {
+          await OfflineFirestoreService.setDocument(
+            collection: 'users',
+            docId: 'user_${DateTime.now().millisecondsSinceEpoch}',
+            data: {
+              'name': 'New User',
+              'email': 'new@example.com',
+              'createdAt': DateTime.now().toIso8601String(),
+            },
+          );
+        },
+      ),
+    );
+  }
+}
+```
+
+---
+
+## Complete Service Class Example
+
+```dart
+class OfflineSyncService {
+  static Future<void> initialize() async {
+    await Firebase.initializeApp();
+    await FirebaseFirestore.instance.settings =
+        const Settings(persistenceEnabled: true);
+
+    await OfflineSyncLayer.instance.initialize(
+      config: SyncConfig.defaultConfig(),
+    );
+
+    _registerHandlers();
+  }
+
+  static void _registerHandlers() {
+    final sync = OfflineSyncLayer.instance;
+
+    sync.registerOperationHandler('firestore_set', (data) async {
+      await FirebaseFirestore.instance
+          .collection(data['collection'])
+          .doc(data['docId'])
+          .set(data['payload']);
+    });
+
+    sync.registerOperationHandler('firestore_update', (data) async {
+      await FirebaseFirestore.instance
+          .collection(data['collection'])
+          .doc(data['docId'])
+          .update(data['payload']);
+    });
+
+    sync.registerOperationHandler('firestore_delete', (data) async {
+      await FirebaseFirestore.instance
+          .collection(data['collection'])
+          .doc(data['docId'])
+          .delete();
+    });
+  }
+
+  static Future<void> create(String collection, String id, Map<String, dynamic> data) async {
+    await OfflineSyncLayer.instance.submitOperation(
+      category: 'firestore_set',
+      priority: QueuePriority.high.value,
+      idempotencyKey: IdempotencyKey.generate(),
+      data: {'collection': collection, 'docId': id, 'payload': data},
+    );
+  }
+
+  static Future<void> update(String collection, String id, Map<String, dynamic> updates) async {
+    await OfflineSyncLayer.instance.submitOperation(
+      category: 'firestore_update',
+      priority: QueuePriority.normal.value,
+      idempotencyKey: IdempotencyKey.generate(),
+      data: {'collection': collection, 'docId': id, 'payload': updates},
+    );
+  }
+
+  static Future<void> delete(String collection, String id) async {
+    await OfflineSyncLayer.instance.submitOperation(
+      category: 'firestore_delete',
+      priority: QueuePriority.high.value,
+      idempotencyKey: IdempotencyKey.generate(),
+      data: {'collection': collection, 'docId': id},
+    );
+  }
+
+  static Future<void> forceSync() async => OfflineSyncLayer.instance.sync();
+
+  static Future<int> getPendingCount() async {
+    final pending = await OfflineSyncLayer.instance.getPendingOperations();
+    return pending.length;
+  }
+
+  static Future<void> clearQueue() async => OfflineSyncLayer.instance.clearQueue();
+
+  static Future<void> retryFailed(String id) async =>
+      OfflineSyncLayer.instance.retryFailedOperation(id);
+}
+```
+
+---
+
+## Complete Todo App Example
+
+### Todo Model
+
+```dart
+class Todo {
+  final String id;
+  final String title;
+  final bool completed;
+  final DateTime createdAt;
+  final DateTime? updatedAt;
+
+  Todo({
+    required this.id,
+    required this.title,
+    this.completed = false,
+    required this.createdAt,
+    this.updatedAt,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'title': title,
+    'completed': completed,
+    'createdAt': createdAt.toIso8601String(),
+    'updatedAt': updatedAt?.toIso8601String(),
+  };
+
+  factory Todo.fromJson(Map<String, dynamic> json) => Todo(
+    id: json['id'],
+    title: json['title'],
+    completed: json['completed'] ?? false,
+    createdAt: DateTime.parse(json['createdAt']),
+    updatedAt: json['updatedAt'] != null ? DateTime.parse(json['updatedAt']) : null,
+  );
+
+  factory Todo.fromFirestore(DocumentSnapshot doc) {
+    final data = doc.data() as Map<String, dynamic>;
+    return Todo(
+      id: doc.id,
+      title: data['title'],
+      completed: data['completed'],
+      createdAt: (data['createdAt'] as Timestamp).toDate(),
+      updatedAt: data['updatedAt'] != null
+          ? (data['updatedAt'] as Timestamp).toDate()
+          : null,
+    );
+  }
+
+  Todo copyWith({String? title, bool? completed}) => Todo(
+    id: id,
+    title: title ?? this.title,
+    completed: completed ?? this.completed,
+    createdAt: createdAt,
+    updatedAt: DateTime.now(),
+  );
+}
+```
+
+### Todo Service
+
+```dart
+class TodoService {
+  static Future<void> addTodo(Todo todo) async {
+    await OfflineSyncLayer.instance.submitOperation(
+      category: 'firestore_set',
+      priority: QueuePriority.high.value,
+      idempotencyKey: 'todo_${todo.id}_${DateTime.now().millisecondsSinceEpoch}',
+      data: {
+        'collection': 'todos',
+        'docId': todo.id,
+        'payload': todo.toJson(),
+      },
+    );
+  }
+
+  static Future<void> updateTodo(Todo todo) async {
+    await OfflineSyncLayer.instance.submitOperation(
+      category: 'firestore_update',
+      priority: QueuePriority.normal.value,
+      idempotencyKey: IdempotencyKey.generate(),
+      data: {
+        'collection': 'todos',
+        'docId': todo.id,
+        'payload': {
+          'completed': todo.completed,
+          'updatedAt': DateTime.now().toIso8601String(),
+        },
+      },
+    );
+  }
+
+  static Future<void> deleteTodo(String todoId) async {
+    await OfflineSyncLayer.instance.submitOperation(
+      category: 'firestore_delete',
+      priority: QueuePriority.high.value,
+      idempotencyKey: 'delete_todo_${todoId}_${DateTime.now().millisecondsSinceEpoch}',
+      data: {
+        'collection': 'todos',
+        'docId': todoId,
+      },
+    );
+  }
+
+  static Stream<List<Todo>> streamTodos() {
+    return FirebaseFirestore.instance
+        .collection('todos')
+        .orderBy('createdAt', descending: true)
+        .snapshots()
+        .map((snapshot) => snapshot.docs
+            .map((doc) => Todo.fromFirestore(doc))
+            .toList());
+  }
+
+  static Future<void> forceSync() async => OfflineSyncLayer.instance.sync();
+}
+```
+
+### Todo List Page
+
+```dart
+final todoListProvider = StreamProvider.autoDispose<List<Todo>>((ref) {
+  return TodoService.streamTodos();
+});
+
+class TodoListPage extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final todosAsync = ref.watch(todoListProvider);
+    final pendingCount = ref.watch(pendingItemsCountProvider).valueOrNull ?? 0;
+    final isSyncing = ref.watch(isSyncingProvider);
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Offline Todo'),
+        actions: [
+          if (pendingCount > 0 || isSyncing)
+            Padding(
+              padding: EdgeInsets.symmetric(horizontal: 8),
+              child: Center(
+                child: Row(
+                  children: [
+                    if (isSyncing)
+                      SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    if (pendingCount > 0)
+                      Padding(
+                        padding: EdgeInsets.only(left: 4),
+                        child: Text('$pendingCount'),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          IconButton(
+            icon: Icon(Icons.sync),
+            onPressed: () async {
+              await TodoService.forceSync();
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('Syncing...')),
+              );
+            },
+          ),
+        ],
+      ),
+      body: Stack(
+        children: [
+          todosAsync.when(
+            data: (todos) {
+              if (todos.isEmpty) {
+                return Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.check_circle_outline, size: 64, color: Colors.grey),
+                      SizedBox(height: 16),
+                      Text('No todos yet', style: TextStyle(color: Colors.grey)),
+                      SizedBox(height: 8),
+                      Text('Add your first todo!', style: TextStyle(fontSize: 12)),
+                    ],
+                  ),
+                );
+              }
+
+              return ListView.builder(
+                itemCount: todos.length,
+                itemBuilder: (context, index) {
+                  final todo = todos[index];
+                  return CheckboxListTile(
+                    title: Text(
+                      todo.title,
+                      style: TextStyle(
+                        decoration: todo.completed ? TextDecoration.lineThrough : null,
+                      ),
+                    ),
+                    value: todo.completed,
+                    onChanged: (completed) async {
+                      await TodoService.updateTodo(todo.copyWith(completed: completed));
+                    },
+                    secondary: IconButton(
+                      icon: Icon(Icons.delete, color: Colors.red),
+                      onPressed: () async => TodoService.deleteTodo(todo.id),
+                    ),
+                  );
+                },
+              );
+            },
+            loading: () => Center(child: CircularProgressIndicator()),
+            error: (err, stack) => Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.error_outline, size: 64, color: Colors.red),
+                  SizedBox(height: 16),
+                  Text('Error loading todos: $err'),
+                  SizedBox(height: 8),
+                  ElevatedButton(
+                    onPressed: () => ref.invalidate(todoListProvider),
+                    child: Text('Retry'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (isSyncing)
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: LinearProgressIndicator(),
+            ),
+        ],
+      ),
+      floatingActionButton: FloatingActionButton(
+        child: Icon(Icons.add),
+        onPressed: () async {
+          final newTodo = Todo(
+            id: DateTime.now().millisecondsSinceEpoch.toString(),
+            title: 'New Task ${DateTime.now().hour}:${DateTime.now().minute}',
+            completed: false,
+            createdAt: DateTime.now(),
+          );
+          await TodoService.addTodo(newTodo);
+        },
+      ),
+    );
+  }
+}
+```
+
+---
+
+## 🏗️ Architecture
+
+```
 UI Widgets
     ↓
-Riverpod Providers
+Riverpod Providers (Real-time data)
     ↓
-OfflineSyncLayer
+OfflineSyncLayer (Queue management)
     ↓
-QueueManager
+QueueManager (Orchestration)
     ↓
 Retry / Conflict / Connectivity Systems
     ↓
-Persistence Layer (Hive)
+Persistence Layer (Hive for queue + Firestore for data)
     ↓
-Backend APIs / Firebase / REST
+Backend APIs / Firebase
 ```
 
 ---
 
-# 📂 Package Structure
+## 📂 Package Structure
 
-```text
+```
 lib/
  ├── core/
  ├── queue/
  ├── connectivity/
  ├── conflict/
  ├── firebase/
+ │   ├── firestore_service.dart
+ │   ├── storage_queue.dart
+ │   └── auth_persistence.dart
  ├── providers/
  ├── ui/
  ├── mixins/
@@ -208,9 +926,9 @@ lib/
 
 ---
 
-# Core Concepts
+## Core Concepts
 
-## Queue Priorities
+### Queue Priorities
 
 | Priority | Value | Use Cases |
 |---|---|---|
@@ -222,7 +940,7 @@ lib/
 
 ---
 
-## Queue Categories
+### Queue Categories
 
 ```dart
 enum QueueCategory {
@@ -240,7 +958,7 @@ enum QueueCategory {
 
 ---
 
-## Sync Strategies
+### Sync Strategies
 
 | Strategy | Description |
 |---|---|
@@ -252,9 +970,7 @@ enum QueueCategory {
 
 ---
 
-## Conflict Resolution
-
-Supported strategies:
+### Conflict Resolution
 
 ```dart
 ConflictStrategy.serverWins
@@ -264,7 +980,7 @@ ConflictStrategy.lastWriteWins
 ConflictStrategy.manualResolve
 ```
 
-### Example
+**Example:**
 
 ```dart
 final resolver = ConflictResolver();
@@ -276,8 +992,7 @@ final resolved = await resolver.resolve(
 );
 ```
 
-### Features
-
+**Features:**
 - Deep merge support
 - Nested map resolution
 - List merging
@@ -286,9 +1001,9 @@ final resolved = await resolver.resolve(
 
 ---
 
-# Providers
+## Providers
 
-## Sync Providers
+### Sync Providers
 
 ```dart
 final offlineSyncLayerProvider
@@ -299,9 +1014,7 @@ final isSyncingProvider
 final syncStatusTextProvider
 ```
 
----
-
-## Queue Providers
+### Queue Providers
 
 ```dart
 final queueManagerProvider
@@ -310,9 +1023,7 @@ final pendingItemsCountProvider
 final queueBreakdownProvider
 ```
 
----
-
-## Connectivity Providers
+### Connectivity Providers
 
 ```dart
 final connectivityMonitorProvider
@@ -322,34 +1033,44 @@ final isConnectedProvider
 
 ---
 
-# Methods
+## Methods
 
-# OfflineSyncLayer
-
-Main singleton for sync orchestration.
+### OfflineSyncLayer
 
 ```dart
+// Initialize
 await OfflineSyncLayer.instance.initialize();
 
+// Submit operation
 await OfflineSyncLayer.instance.submitOperation(
   category: 'orders',
   priority: 1,
+  idempotencyKey: IdempotencyKey.generate(),
   data: {'key': 'value'},
 );
 
+// Manual sync
 await OfflineSyncLayer.instance.sync();
 
+// Clear queue
 await OfflineSyncLayer.instance.clearQueue();
 
-final pending =
-    await OfflineSyncLayer.instance.getPendingOperations();
+// Get pending operations
+final pending = await OfflineSyncLayer.instance.getPendingOperations();
+
+// Retry failed operation
+await OfflineSyncLayer.instance.retryFailedOperation('item_id');
+
+// Check initialization
+if (OfflineSyncLayer.instance.isInitialized) {
+  // Safe to use
+}
+
+// Dispose
+await OfflineSyncLayer.instance.dispose();
 ```
 
----
-
-# QueueManager
-
-Handles queue orchestration.
+### QueueManager
 
 ```dart
 final manager = QueueManager();
@@ -362,40 +1083,39 @@ await manager.enqueue(
   data: {},
 );
 
-await manager.processQueue(
-  maxConcurrent: 3,
-);
+await manager.processQueue(maxConcurrent: 3);
 
 await manager.retryFailed('item_id');
 ```
 
----
-
-# StorageQueue
-
-Queue-based Firebase Storage uploads.
+### StorageQueue
 
 ```dart
 final storageQueue = StorageQueue();
 
+// Upload file
 await storageQueue.uploadFile(
   file: file,
   path: 'uploads/image.jpg',
   idempotencyKey: IdempotencyKey.generate(),
 );
 
+// Control upload
 storageQueue.pauseUpload('key');
 storageQueue.resumeUpload('key');
 storageQueue.cancelUpload('key');
+
+// Track progress
+storageQueue.progressStream.listen((progress) {
+  print('Progress: ${progress.percentage}%');
+});
 ```
 
 ---
 
-# UI Components
+## UI Components
 
-# ConnectivityBanner
-
-Shows offline banner automatically.
+### ConnectivityBanner
 
 ```dart
 ConnectivityBanner(
@@ -403,11 +1123,7 @@ ConnectivityBanner(
 )
 ```
 
----
-
-# SyncStatusIndicator
-
-Displays sync state.
+### SyncStatusIndicator
 
 ```dart
 SyncStatusIndicator(
@@ -415,11 +1131,7 @@ SyncStatusIndicator(
 )
 ```
 
----
-
-# SyncProgressBar
-
-Displays queue progress.
+### SyncProgressBar
 
 ```dart
 SyncProgressBar(
@@ -427,11 +1139,7 @@ SyncProgressBar(
 )
 ```
 
----
-
-# OfflineToast
-
-Shows offline notifications.
+### OfflineToast
 
 ```dart
 OfflineToast(
@@ -439,84 +1147,22 @@ OfflineToast(
 )
 ```
 
----
-
-# DebugPanel
-
-Powerful debug and inspection tool.
+### DebugPanel
 
 ```dart
 showModalBottomSheet(
   context: context,
+  isScrollControlled: true,
+  backgroundColor: Colors.transparent,
   builder: (_) => const DebugPanel(),
 );
 ```
 
-### Features
-
-- Queue inspection
-- Sync metrics
-- Connectivity status
-- Retry operations
-- Queue breakdown
-- Manual sync controls
+**Features:** Queue inspection, sync metrics, connectivity status, retry operations, queue breakdown, manual sync controls.
 
 ---
 
-# Firebase Integration
-
-## Firestore
-
-```dart
-syncLayer.registerOperationHandler(
-  'firestore_write',
-  (data) async {
-    await FirebaseFirestore.instance
-        .collection('todos')
-        .doc(data['id'])
-        .set(data);
-  },
-);
-```
-
----
-
-## Firebase Storage
-
-```dart
-final storageQueue = StorageQueue();
-
-await storageQueue.uploadFile(
-  file: file,
-  path: 'uploads/image.jpg',
-  idempotencyKey: IdempotencyKey.generate(),
-);
-```
-
-Supports:
-
-- Upload queueing
-- Pause uploads
-- Resume uploads
-- Cancel uploads
-- Progress tracking
-
----
-
-## Firebase Auth
-
-```dart
-final auth = AuthPersistence();
-
-await auth.signInWithEmail(
-  'email@example.com',
-  'password',
-);
-```
-
----
-
-# Configuration
+## Configuration
 
 ```dart
 const config = SyncConfig(
@@ -533,146 +1179,132 @@ const config = SyncConfig(
 );
 ```
 
-### Predefined Configurations
+**Predefined Configurations:**
 
 ```dart
-SyncConfig.defaultConfig()
-SyncConfig.aggressive()
-SyncConfig.batteryFriendly()
-SyncConfig.wifiOnly()
+SyncConfig.defaultConfig()      // Balanced
+SyncConfig.aggressive()         // Fast sync, more battery
+SyncConfig.batteryFriendly()    // Less frequent sync
+SyncConfig.wifiOnly()           // Only sync on WiFi
 ```
 
 ---
 
-# Metrics & Analytics
-
-Track:
-
-- Total syncs
-- Successful syncs
-- Failed syncs
-- Average sync duration
-- Last sync time
-- Success rate
-
-Example:
+## Metrics & Analytics
 
 ```dart
 final metrics = OfflineSyncLayer.instance.metrics;
 
-print(metrics.successRatePercentage);
+print('Success rate: ${metrics.successRatePercentage}%');
+print('Total syncs: ${metrics.totalSyncs}');
+print('Failed syncs: ${metrics.failedSyncs}');
+print('Avg duration: ${metrics.averageSyncDuration}');
 ```
 
 ---
 
-# Retry System
-
-Features:
-
-- Exponential backoff
-- Delayed retry scheduling
-- Retry tracking
-- Configurable retry count
-
-Example:
+## Retry System
 
 ```dart
-final delay =
-    BackoffCalculator.calculateNextRetry(3);
+final delay = BackoffCalculator.calculateNextRetry(attempt: 3);
+// Returns: Duration(seconds: 8) for attempt 3 with base delay 2
+```
+
+**Features:** Exponential backoff, delayed retry scheduling, retry tracking, configurable retry count.
+
+---
+
+## Connectivity Monitoring
+
+```dart
+final connected = OfflineSyncLayer.instance.connectivityMonitor.isConnected;
+final isWifi = await OfflineSyncLayer.instance.connectivityMonitor.isWifiConnected;
+
+// Listen to changes
+OfflineSyncLayer.instance.connectivityMonitor.onConnectivityChanged.listen((status) {
+  print('Connectivity: $status');
+});
 ```
 
 ---
 
-# Connectivity Monitoring
+## Utilities
 
-Automatically:
-
-- Detects online/offline state
-- Syncs on reconnect
-- Supports WiFi-only mode
-- Broadcasts connectivity changes
-
-Example:
+### Idempotency Keys
 
 ```dart
-final connected =
-    OfflineSyncLayer.instance
-        .connectivityMonitor
-        .isConnected;
-```
-
----
-
-# Utilities
-
-## Idempotency Keys
-
-```dart
+// Auto-generate
 final key = IdempotencyKey.generate();
+
+// Custom key
+final customKey = 'user_${userId}_action_${timestamp}';
 ```
 
----
-
-## Logger
+### Logger
 
 ```dart
 OfflineLogger.isEnabled = true;
 
 OfflineLogger.info('Sync started');
-OfflineLogger.error('Sync failed');
-OfflineLogger.debug('Queue processed');
+OfflineLogger.error('Sync failed: $error');
+OfflineLogger.debug('Queue processed: ${items.length} items');
+```
+
+### Backoff Calculator
+
+```dart
+final delay = BackoffCalculator.calculateNextRetry(3);
+// Exponential backoff: 2^3 = 8 seconds
 ```
 
 ---
 
-## Backoff Calculator
+## Examples
+
+### Offline Orders
 
 ```dart
-final delay =
-    BackoffCalculator.calculateNextRetry(3);
-```
-
----
-
-# Examples
-
-## Offline Orders
-
-```dart
-await submitOffline(
+await OfflineSyncLayer.instance.submitOperation(
   category: QueueCategory.orders.label,
   priority: QueuePriority.high.value,
+  idempotencyKey: IdempotencyKey.generate(),
   data: {
     'product': 'Laptop',
     'quantity': 1,
+    'price': 999.99,
+    'userId': currentUser.id,
   },
 );
 ```
 
----
-
-## Chat Messages
+### Chat Messages
 
 ```dart
-await submitOffline(
+await OfflineSyncLayer.instance.submitOperation(
   category: QueueCategory.messages.label,
   priority: QueuePriority.high.value,
+  idempotencyKey: IdempotencyKey.generate(),
   data: {
     'message': 'Hello!',
+    'recipientId': 'user456',
+    'timestamp': DateTime.now().toIso8601String(),
   },
 );
 ```
 
----
-
-## Analytics Tracking
+### Analytics Tracking
 
 ```dart
 await OfflineSyncLayer.instance.submitOperation(
   category: 'analytics',
   priority: QueuePriority.low.value,
+  idempotencyKey: IdempotencyKey.generate(),
   data: {
     'event_name': 'button_click',
+    'properties': {
+      'button': 'add_todo',
+      'screen': 'home',
+    },
     'timestamp': DateTime.now().toIso8601String(),
   },
 );
@@ -680,261 +1312,118 @@ await OfflineSyncLayer.instance.submitOperation(
 
 ---
 
-# Debugging
+## Debugging
 
-## Show Debug Panel
+### Enable Debug Logging
+
+```dart
+OfflineLogger.isEnabled = true;
+```
+
+### Show Debug Panel
 
 ```dart
 showModalBottomSheet(
   context: context,
-  builder: (_) => const DebugPanel(),
+  isScrollControlled: true,
+  backgroundColor: Colors.transparent,
+  builder: (BuildContext context) => const DebugPanel(),
 );
 ```
 
----
-
-## Manual Inspection
+### Manual Inspection
 
 ```dart
-final operations =
-    await OfflineSyncLayer.instance
-        .getPendingOperations();
+// Get pending operations
+final operations = await OfflineSyncLayer.instance.getPendingOperations();
+print('Pending: ${operations.length}');
 
-final metrics =
-    OfflineSyncLayer.instance.metrics;
+// Get metrics
+final metrics = OfflineSyncLayer.instance.metrics;
+print('Success rate: ${metrics.successRatePercentage}%');
 
-final isConnected =
-    OfflineSyncLayer.instance
-        .connectivityMonitor
-        .isConnected;
+// Check connectivity
+final isConnected = OfflineSyncLayer.instance.connectivityMonitor.isConnected;
+print('Connected: $isConnected');
+
+// Check initialization
+final isInitialized = OfflineSyncLayer.instance.isInitialized;
+print('Initialized: $isInitialized');
 ```
-# 🚨 Troubleshooting
-
-Common issues and their solutions when using `riverpod_offline_sync`.
 
 ---
 
-## 1. Hive Initialization Errors
+## Troubleshooting
 
-### ❌ Error: `HiveError: A Hive box with name 'offline_queue' already exists`
-
-### Cause
-Multiple initializations or hot reload during development.
-
-### Solution
+### ❌ `HiveError: A Hive box with name 'offline_queue' already exists`
 
 ```dart
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
-  // Initialize Hive before sync layer
   await Hive.initFlutter();
-
-  // Then initialize offline sync
   await OfflineSyncLayer.instance.initialize();
-
   runApp(const ProviderScope(child: MyApp()));
 }
 ```
 
----
-
-### ❌ Error: `HiveError: Hive has not been initialized. Did you forget to call Hive.initFlutter()?`
-
-### Solution
+### ❌ `Hive has not been initialized`
 
 ```dart
 await Hive.initFlutter();
-
 await OfflineSyncLayer.instance.initialize();
 ```
 
----
-
-### ❌ Error: `TypeAdapter for typeId 0 is already registered`
-
-### Solution
-
-```dart
-// The package handles this internally with HiveRegistry.ensureRegistered()
-// Make sure you're not manually registering adapters
-```
-
----
-
-# 2. Connectivity Listener Issues
-
-### ❌ Error: `connectivity_plus` version mismatch
-
-### Cause
-Different versions of `connectivity_plus` have different APIs.
-
-### Solution
-
-```yaml
-dependencies:
-  connectivity_plus: ^5.0.2
-```
-
----
-
-### ❌ Error: `StreamSubscription<ConnectivityResult>` type mismatch
-
-### Solution
-
-```dart
-// Don't modify the connectivity_monitor.dart file
-// The package handles both single and list results automatically
-```
-
----
-
-### ❌ Error: Connectivity changes not detected
-
-### Solution
-
-```dart
-if (!OfflineSyncLayer.instance.connectivityMonitor.isConnected) {
-  print('Not connected to network');
-}
-
-final isConnected =
-    OfflineSyncLayer.instance
-        .connectivityMonitor
-        .isConnected;
-```
-
----
-
-# 3. Queue Stuck Processing
-
-### ❌ Issue: Items in queue but never processed
-
-## Option 1 — Check if sync is enabled
-
-```dart
-await OfflineSyncLayer.instance.sync();
-```
-
----
-
-## Option 2 — Check if handler is registered
-
-```dart
-OfflineSyncLayer.instance.registerOperationHandler(
-  'your_category',
-  (data) async {
-    // Your processing logic
-  },
-);
-```
-
----
-
-## Option 3 — Check retry scheduling
-
-```dart
-await OfflineSyncLayer.instance.retryFailedOperation('item_id');
-```
-
----
-
-## Option 4 — Check queue size limits
-
-```dart
-SyncConfig(
-  maxQueueSize: 2000,
-);
-```
-
----
-
-## Option 5 — Check connectivity
-
-```dart
-if (syncConfig.syncOnWiFiOnly) {
-  final isWifi =
-      await OfflineSyncLayer.instance
-          .connectivityMonitor
-          .isWifiConnected;
-
-  if (!isWifi) {
-    print('WiFi-only mode enabled');
-  }
-}
-```
-
----
-
-# 4. Duplicate Operations
-
-### ❌ Issue: Same operation submitted multiple times
-
-## Solution 1 — Use idempotency keys
-
-```dart
-await OfflineSyncLayer.instance.submitOperation(
-  category: 'orders',
-  priority: 1,
-  data: orderData,
-  idempotencyKey:
-      'unique_order_${orderData['id']}',
-);
-```
-
----
-
-## Solution 2 — Generate UUID keys
-
-```dart
-import 'package:uuid/uuid.dart';
-
-final idempotencyKey = const Uuid().v4();
-
-await OfflineSyncLayer.instance.submitOperation(
-  category: 'orders',
-  priority: 1,
-  data: orderData,
-  idempotencyKey: idempotencyKey,
-);
-```
-
----
-
-## Solution 3 — Use built-in generator
-
-```dart
-await OfflineSyncLayer.instance.submitOperation(
-  category: 'orders',
-  priority: 1,
-  data: orderData,
-  idempotencyKey: IdempotencyKey.generate(),
-);
-```
-
----
-
-# 5. Provider Initialization Race Conditions
-
-### ❌ Error: `Null check operator used on a null value`
-
-### Solution
+### ❌ `No Firebase App '[DEFAULT]' has been created`
 
 ```dart
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
+  await Firebase.initializeApp(); // Initialize first
   await OfflineSyncLayer.instance.initialize();
-
   runApp(const ProviderScope(child: MyApp()));
 }
 ```
 
----
+### ❌ `Firestore persistence enabled too late`
 
-### ❌ Error: `OfflineSyncLayer not initialized`
+```dart
+await Firebase.initializeApp();
+await FirebaseFirestore.instance.settings =
+    const Settings(persistenceEnabled: true); // Before sync layer
+await OfflineSyncLayer.instance.initialize();
+```
 
-### Solution
+### ❌ Queue Stuck Processing
+
+```dart
+// 1. Force sync
+await OfflineSyncLayer.instance.sync();
+
+// 2. Verify handler is registered
+OfflineSyncLayer.instance.registerOperationHandler('your_category', ...);
+
+// 3. Check WiFi-only mode
+if (syncConfig.syncOnWiFiOnly) {
+  final isWifi = await OfflineSyncLayer.instance.connectivityMonitor.isWifiConnected;
+  if (!isWifi) print('WiFi-only mode active');
+}
+
+// 4. Retry manually
+await OfflineSyncLayer.instance.retryFailedOperation('item_id');
+```
+
+### ❌ Duplicate Operations
+
+```dart
+await OfflineSyncLayer.instance.submitOperation(
+  category: 'orders',
+  priority: 1,
+  data: orderData,
+  idempotencyKey: 'unique_order_${orderData['id']}', // Custom key
+);
+```
+
+### ❌ `OfflineSyncLayer not initialized`
 
 ```dart
 if (OfflineSyncLayer.instance.isInitialized) {
@@ -944,299 +1433,95 @@ if (OfflineSyncLayer.instance.isInitialized) {
 }
 ```
 
----
+### Debug Checklist
 
-# 6. Firebase Integration Issues
-
-### ❌ Error: `[core/no-app] No Firebase App '[DEFAULT]' has been created`
-
-### Solution
-
-```dart
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-
-  await Firebase.initializeApp();
-
-  await OfflineSyncLayer.instance.initialize();
-
-  runApp(const ProviderScope(child: MyApp()));
-}
-```
-
----
-
-### ❌ Error: `Firestore persistence enabled too late`
-
-### Solution
-
-```dart
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-
-  await Firebase.initializeApp();
-
-  await FirebaseFirestore.instance.settings =
-      const Settings(
-        persistenceEnabled: true,
-      );
-
-  await OfflineSyncLayer.instance.initialize();
-
-  runApp(const ProviderScope(child: MyApp()));
-}
-```
-
----
-
-# 7. Memory Leaks
-
-### ❌ Issue: StreamControllers not disposed
-
-### Solution
-
-```dart
-await OfflineSyncLayer.instance.dispose();
-```
-
----
-
-# 8. Performance Issues
-
-### ❌ Issue: Large queue affecting performance
-
-## Solution 1 — Limit concurrent operations
-
-```dart
-SyncConfig(
-  maxConcurrentOperations: 3,
-  maxQueueSize: 500,
-);
-```
-
----
-
-## Solution 2 — Use background priority
-
-```dart
-await OfflineSyncLayer.instance.submitOperation(
-  category: 'analytics',
-  priority: QueuePriority.background.value,
-  data: analyticsData,
-);
-```
-
----
-
-## Solution 3 — Enable WiFi-only mode
-
-```dart
-SyncConfig(
-  syncOnWiFiOnly: true,
-);
-```
-
----
-
-# 9. Debug Panel Not Showing
-
-### ❌ Issue: Debug panel doesn't open or shows blank
-
-### Solution
-
-```dart
-showModalBottomSheet(
-  context: context,
-  isScrollControlled: true,
-  backgroundColor: Colors.transparent,
-  builder: (BuildContext context) {
-    return const DebugPanel();
-  },
-);
-```
-
----
-
-# 10. Common Setup Mistakes
-
-### ❌ Mistake: Forgetting to register handlers
-
-### Solution
-
-```dart
-void main() async {
-  await OfflineSyncLayer.instance.initialize();
-
-  OfflineSyncLayer.instance.registerOperationHandler(
-    'orders',
-    (data) async {
-      // Process order
-    },
-  );
-
-  runApp(MyApp());
-}
-```
-
----
-
-### ❌ Mistake: Using providers before initialization
-
-### Solution
-
-```dart
-final pendingCountAsync =
-    ref.watch(pendingItemsCountProvider);
-
-final pendingCount =
-    pendingCountAsync.valueOrNull ?? 0;
-```
-
----
-
-### ❌ Mistake: Not handling async initialization in Riverpod
-
-### Solution
-
-```dart
-final pendingItems =
-    ref.watch(pendingItemsProvider)
-        .valueOrNull ?? [];
-```
-
----
-
-# 🔍 Debug Checklist
-
-Use this checklist when troubleshooting:
-
-- [ ] `OfflineSyncLayer.instance.isInitialized` is true
+- [ ] `OfflineSyncLayer.instance.isInitialized` is `true`
 - [ ] Handlers registered for all categories
+- [ ] Firebase initialized before sync layer
+- [ ] Firestore persistence enabled before sync layer
 - [ ] Connectivity monitor working
 - [ ] Queue has items
 - [ ] No console errors
 - [ ] Hive initialized
-- [ ] Firebase initialized
-- [ ] Permissions granted
-- [ ] Not blocked by WiFi-only mode
 - [ ] Unique idempotency keys used
+- [ ] WiFi-only mode not blocking (if enabled)
 
 ---
 
-# 📞 Getting Help
+## FAQ
 
-## Enable debug logging
+**Q: Does it work offline?**
+A: Yes. Queue operations persist locally using Hive and sync automatically when online.
 
-```dart
-OfflineLogger.isEnabled = true;
-```
-
----
-
-## Open debug panel
-
-```dart
-showModalBottomSheet(
-  context: context,
-  builder: (_) => const DebugPanel(),
-);
-```
-
----
-
-## Inspect queue manually
-
-```dart
-final pending =
-    await OfflineSyncLayer.instance
-        .getPendingOperations();
-
-print('Pending operations: $pending');
-```
-
----
-
-## Check sync metrics
-
-```dart
-final metrics =
-    OfflineSyncLayer.instance.metrics;
-
-print('Total syncs: ${metrics.totalSyncs}');
-print('Failed syncs: ${metrics.failedSyncs}');
-```
-
----
-
-## Open a GitHub issue with:
-
-- Error logs
-- Steps to reproduce
-- Flutter doctor output
-- Package versions
-
----
-
-**This troubleshooting guide covers the most common issues and their solutions! 🚀**
-
-
----
-
-# FAQ
-
-### Q: Does it work offline?
-A: Yes. Queue operations persist locally and sync automatically later.
-
----
-
-### Q: What happens if the app restarts?
+**Q: What happens if the app restarts?**
 A: Queue data persists using Hive and resumes automatically.
 
----
+**Q: Does it support Firebase?**
+A: Yes. Full Firestore, Storage, and Auth integrations are included.
 
-### Q: Does it support Firebase?
-A: Yes. Firestore, Storage, and Auth integrations are included.
+**Q: Can I use custom backends?**
+A: Yes. Works with REST APIs, GraphQL, or any backend.
 
----
-
-### Q: Can I use custom backends?
-A: Yes. Works with REST APIs, GraphQL, Firebase, or any backend.
-
----
-
-### Q: How are duplicates prevented?
+**Q: How are duplicates prevented?**
 A: Idempotency keys prevent duplicate operations.
 
----
-
-### Q: Does it support large uploads?
+**Q: Does it support large uploads?**
 A: Yes. Includes pause, resume, cancel, and progress tracking.
 
----
-
-### Q: Is it Riverpod-only?
+**Q: Is it Riverpod-only?**
 A: Core sync system works independently, but Riverpod integration is included.
 
+**Q: Do I need Firestore persistence enabled?**
+A: Recommended for a complete offline-first experience. It works alongside `riverpod_offline_sync`.
+
+**Q: How does this compare to Firebase's offline?**
+A: Firebase handles query caching; `riverpod_offline_sync` handles operation queuing with retries, conflict resolution, and full control.
+
+**Q: Can I use both together?**
+A: Yes! Use Firestore native offline for reads and `riverpod_offline_sync` for critical writes needing control.
+
 ---
 
-# License
+## 🎯 Handler Registration Checklist
+
+**Required handlers to register in `main()`:**
+- ✅ `firestore_set` — For create/set operations
+- ✅ `firestore_update` — For update operations
+- ✅ `firestore_delete` — For delete operations
+- ✅ `firestore_batch` — For batch writes (optional)
+- ✅ `api_request` — For custom API endpoints
+- ✅ `analytics` — For analytics tracking
+
+**No handler needed for:**
+- ✅ Firebase Storage uploads (uses `StorageQueue`)
+- ✅ Firestore real-time listeners (native)
+
+---
+
+## 📊 Package Comparison
+
+| Feature | Firebase Only | With riverpod_offline_sync |
+|---|---|---|
+| Offline reads | ✅ Yes (cached queries) | ✅ Yes (via Firestore) |
+| Offline writes | ✅ Basic queue | ✅ **Full queue control** |
+| Pause/Resume operations | ❌ No | ✅ **Yes** |
+| Conflict resolution | ❌ Last write wins | ✅ **Multiple strategies** |
+| Retry logic | ✅ Basic | ✅ **Customizable** |
+| Queue inspection | ❌ No | ✅ **Debug panel + metrics** |
+| Idempotency | ❌ Manual | ✅ **Built-in** |
+| Progress tracking | ❌ No | ✅ **Real-time streams** |
+| Upload control | ❌ No | ✅ **Pause/Resume/Cancel** |
+
+---
+
+## License
 
 MIT License — see [LICENSE](LICENSE) file for details.
 
 ---
 
-# ❤️ Built For Offline-First Flutter Apps
+## ❤️ Built For Offline-First Flutter Apps
 
-Reliable synchronization for:
+Reliable synchronization for super apps, delivery apps, chat apps, POS systems, CRM apps, warehouse systems, social apps, field-service apps, and media upload apps.
 
-- Super apps
-- Delivery apps
-- Chat apps
-- POS systems
-- CRM apps
-- Warehouse systems
-- Social apps
-- Field-service apps
-- Media upload apps
-
-🚀
+**Perfect for Firebase offline-first development! 🚀**
