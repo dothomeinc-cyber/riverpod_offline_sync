@@ -1,6 +1,8 @@
+// storage_queue.dart - Update uploadFile method
 import 'dart:io';
-import 'dart:ui';
+// import 'dart:ui';
 import 'package:firebase_storage/firebase_storage.dart';
+import 'package:flutter/material.dart';
 
 class StorageQueue {
   final FirebaseStorage _storage = FirebaseStorage.instance;
@@ -11,7 +13,8 @@ class StorageQueue {
     required File file,
     required String path,
     required String idempotencyKey,
-    VoidCallback? onProgress,
+    ValueChanged<double>?
+        onProgress, // Changed from VoidCallback
   }) async {
     if (_uploads.containsKey(idempotencyKey)) {
       return await _getUploadResult(idempotencyKey);
@@ -30,8 +33,8 @@ class StorageQueue {
     }
   }
 
-  UploadTask _uploadWithProgress(
-      File file, String path, VoidCallback? onProgress) {
+  UploadTask _uploadWithProgress(File file, String path,
+      ValueChanged<double>? onProgress) {
     final ref = _storage.ref(path);
     final task = ref.putFile(file);
 
@@ -39,13 +42,14 @@ class StorageQueue {
       task.snapshotEvents.listen((snapshot) {
         final progress =
             snapshot.bytesTransferred / snapshot.totalBytes;
-        if (progress > 0) onProgress();
+        onProgress(progress);
       });
     }
 
     return task;
   }
 
+  // Rest of the class remains the same...
   Future<String> _getUploadResult(
       String idempotencyKey) async {
     final task = _uploads[idempotencyKey];

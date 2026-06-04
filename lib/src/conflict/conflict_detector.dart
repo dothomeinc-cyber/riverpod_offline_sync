@@ -1,4 +1,17 @@
+// conflict_detector.dart
 class ConflictDetector {
+  final List<String> ignoredFields;
+
+  const ConflictDetector({
+    this.ignoredFields = const [
+      'updatedAt',
+      'lastSeen',
+      'syncVersion',
+      '_localId',
+      'cachedAt',
+    ],
+  });
+
   List<String> detectConflicts(
     Map<String, dynamic> local,
     Map<String, dynamic> remote,
@@ -6,6 +19,9 @@ class ConflictDetector {
     final conflicts = <String>[];
 
     for (final key in local.keys) {
+      // Skip ignored fields
+      if (ignoredFields.contains(key)) continue;
+
       if (remote.containsKey(key) &&
           local[key] != remote[key]) {
         if (_isConflict(local[key], remote[key])) {

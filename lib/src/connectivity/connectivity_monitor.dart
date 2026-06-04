@@ -1,3 +1,4 @@
+// connectivity_monitor.dart
 import 'dart:async';
 import 'package:connectivity_plus/connectivity_plus.dart';
 
@@ -6,7 +7,7 @@ class ConnectivityMonitor {
   final _connectivityController =
       StreamController<bool>.broadcast();
   bool _isConnected = true;
-  late StreamSubscription<List<ConnectivityResult>>
+  StreamSubscription<List<ConnectivityResult>>?
       _subscription;
 
   Future<void> initialize() async {
@@ -39,7 +40,7 @@ class ConnectivityMonitor {
   }
 
   void dispose() {
-    _subscription.cancel();
+    _subscription?.cancel();
     _connectivityController.close();
   }
 }

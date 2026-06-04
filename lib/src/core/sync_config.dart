@@ -1,3 +1,6 @@
+// sync_config.dart - Already has conflictStrategy, ensure it's complete
+import '../conflict/conflict_strategy.dart';
+
 class SyncConfig {
   final bool autoSyncOnReconnect;
   final bool syncImmediately;
@@ -9,6 +12,7 @@ class SyncConfig {
   final bool enableDebugLogging;
   final bool syncOnWiFiOnly;
   final int maxQueueSize;
+  final ConflictStrategy? conflictStrategy;
 
   const SyncConfig({
     this.autoSyncOnReconnect = true,
@@ -21,6 +25,7 @@ class SyncConfig {
     this.enableDebugLogging = false,
     this.syncOnWiFiOnly = false,
     this.maxQueueSize = 1000,
+    this.conflictStrategy,
   });
 
   factory SyncConfig.defaultConfig() => const SyncConfig();
@@ -60,6 +65,7 @@ class SyncConfig {
     bool? enableDebugLogging,
     bool? syncOnWiFiOnly,
     int? maxQueueSize,
+    ConflictStrategy? conflictStrategy,
   }) {
     return SyncConfig(
       autoSyncOnReconnect:
@@ -78,6 +84,8 @@ class SyncConfig {
           enableDebugLogging ?? this.enableDebugLogging,
       syncOnWiFiOnly: syncOnWiFiOnly ?? this.syncOnWiFiOnly,
       maxQueueSize: maxQueueSize ?? this.maxQueueSize,
+      conflictStrategy:
+          conflictStrategy ?? this.conflictStrategy,
     );
   }
 
@@ -93,5 +101,6 @@ class SyncConfig {
         'enableDebugLogging': enableDebugLogging,
         'syncOnWiFiOnly': syncOnWiFiOnly,
         'maxQueueSize': maxQueueSize,
+        'conflictStrategy': conflictStrategy?.label,
       };
 }

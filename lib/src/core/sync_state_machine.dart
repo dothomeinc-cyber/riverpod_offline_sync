@@ -4,9 +4,7 @@ enum SyncMachineState {
   idle,
   checking,
   pulling,
-  processing,
   pushing,
-  resolving,
   completing,
   failed,
   cancelled,
@@ -33,26 +31,28 @@ class SyncStateMachine {
     switch (from) {
       case SyncMachineState.idle:
         return to == SyncMachineState.checking;
+
       case SyncMachineState.checking:
-        return to == SyncMachineState.pulling ||
-            to == SyncMachineState.failed;
-      case SyncMachineState.pulling:
-        return to == SyncMachineState.processing ||
-            to == SyncMachineState.failed;
-      case SyncMachineState.processing:
         return to == SyncMachineState.pushing ||
+            to == SyncMachineState.pulling ||
             to == SyncMachineState.failed;
+
       case SyncMachineState.pushing:
-        return to == SyncMachineState.resolving ||
+        return to == SyncMachineState.pulling ||
+            to == SyncMachineState.completing ||
             to == SyncMachineState.failed;
-      case SyncMachineState.resolving:
+
+      case SyncMachineState.pulling:
         return to == SyncMachineState.completing ||
             to == SyncMachineState.failed;
+
       case SyncMachineState.completing:
         return to == SyncMachineState.idle;
+
       case SyncMachineState.failed:
         return to == SyncMachineState.idle ||
             to == SyncMachineState.checking;
+
       case SyncMachineState.cancelled:
         return to == SyncMachineState.idle;
     }
@@ -66,7 +66,8 @@ class SyncStateMachine {
   bool get isIdle => _currentState == SyncMachineState.idle;
   bool get isSyncing =>
       _currentState != SyncMachineState.idle &&
-      _currentState != SyncMachineState.failed;
+      _currentState != SyncMachineState.failed &&
+      _currentState != SyncMachineState.cancelled;
   bool get hasFailed =>
       _currentState == SyncMachineState.failed;
 

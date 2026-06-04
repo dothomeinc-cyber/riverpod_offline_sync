@@ -1,6 +1,6 @@
 name: riverpod_offline_sync
 description: Production-ready offline-first sync engine for Flutter super apps with Riverpod integration
-version: 1.0.2
+version: 1.0.4
 
 homepage: https://github.com/yourusername/riverpod_offline_sync
 repository: https://github.com/yourusername/riverpod_offline_sync

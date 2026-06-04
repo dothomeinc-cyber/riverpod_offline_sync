@@ -1,4 +1,6 @@
+// lib/src/queue/queue_item.dart
 import 'package:hive/hive.dart';
+import 'package:uuid/uuid.dart';
 
 @HiveType(typeId: 0)
 class QueueItem {
@@ -40,6 +42,24 @@ class QueueItem {
     this.nextRetryAt,
     this.lastError,
   });
+
+  // Factory constructor for creating new items with UUID
+  factory QueueItem.create({
+    required String category,
+    required int priority,
+    required Map<String, dynamic> data,
+    required String idempotencyKey,
+  }) {
+    return QueueItem(
+      id: const Uuid()
+          .v4(), // Use UUID instead of timestamp
+      category: category,
+      priority: priority,
+      data: Map<String, dynamic>.from(data),
+      idempotencyKey: idempotencyKey,
+      createdAt: DateTime.now(),
+    );
+  }
 
   Map<String, dynamic> toJson() => {
         'id': id,

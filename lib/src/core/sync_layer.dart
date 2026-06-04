@@ -1,5 +1,6 @@
+// lib/src/core/sync_layer.dart
 import 'dart:async';
-
+import 'package:riverpod_offline_sync/riverpod_offline_sync.dart';
 import 'package:synchronized/synchronized.dart';
 import 'package:riverpod_offline_sync/src/queue/queue_manager.dart';
 import 'package:riverpod_offline_sync/src/connectivity/connectivity_monitor.dart';
@@ -10,6 +11,10 @@ import 'package:riverpod_offline_sync/src/core/sync_state_machine.dart';
 import 'package:riverpod_offline_sync/src/conflict/conflict_resolver.dart';
 import 'package:riverpod_offline_sync/src/utils/idempotency_key.dart';
 import 'package:riverpod_offline_sync/src/utils/logger.dart';
+
+// Import the observer from a separate file to avoid duplication
+// If you haven't created the separate file yet, we'll define it conditionally
+export 'sync_observer.dart';
 
 enum SyncStateType { idle, syncing, completed, failed }
 
@@ -28,11 +33,13 @@ class OfflineSyncLayer {
 
   late QueueManager _queueManager;
   late ConnectivityMonitor _connectivityMonitor;
-  // ignore: unused_field
   late ConflictResolver _conflictResolver;
   late SyncConfig _config;
   late SyncMetrics _metrics;
   late SyncStateMachine _stateMachine;
+
+  // Add observer manager
+  late SyncObserverManager _observerManager;
 
   final _syncStateController =
       StreamController<SyncStateType>.broadcast();
@@ -51,11 +58,13 @@ class OfflineSyncLayer {
     if (_isInitialized) return;
 
     _config = config ?? SyncConfig.defaultConfig();
-    _queueManager = QueueManager();
+    _queueManager = QueueManager.instance;
     _connectivityMonitor = ConnectivityMonitor();
     _conflictResolver = ConflictResolver();
     _metrics = SyncMetrics();
     _stateMachine = SyncStateMachine();
+    _observerManager =
+        SyncObserverManager(); // Initialize observer manager
 
     await _queueManager.initialize(
         maxQueueSize: _config.maxQueueSize);
@@ -66,6 +75,15 @@ class OfflineSyncLayer {
     _isInitialized = true;
     OfflineLogger.info(
         'OfflineSyncLayer initialized with config: ${_config.toJson()}');
+  }
+
+  // Observer management methods
+  void addObserver(SyncObserver observer) {
+    _observerManager.addObserver(observer);
+  }
+
+  void removeObserver(SyncObserver observer) {
+    _observerManager.removeObserver(observer);
   }
 
   void _setupListeners() {
@@ -113,30 +131,41 @@ class OfflineSyncLayer {
       if (_isSyncing) return;
 
       _isSyncing = true;
+      _observerManager
+          .notifySyncStarted(); // Notify observers
       _stateMachine.transitionTo(SyncMachineState.checking);
       _syncStateController.add(SyncStateType.syncing);
 
       try {
-        _stateMachine
-            .transitionTo(SyncMachineState.pulling);
-        await _pushChanges();
-
-        if (strategy != SyncStrategyType.pushOnly) {
+        // Push phase
+        if (strategy != SyncStrategyType.pullOnly) {
           _stateMachine
               .transitionTo(SyncMachineState.pushing);
+          await _pushChanges();
+        }
+
+        // Pull phase
+        if (strategy != SyncStrategyType.pushOnly) {
+          _stateMachine
+              .transitionTo(SyncMachineState.pulling);
           await _pullChanges();
         }
 
+        // Complete
         _stateMachine
             .transitionTo(SyncMachineState.completing);
         _syncStateController.add(SyncStateType.completed);
         _metrics.recordSuccess();
         _stateMachine.transitionTo(SyncMachineState.idle);
+        _observerManager
+            .notifySyncCompleted(); // Notify observers
         OfflineLogger.info('Sync completed successfully');
       } catch (e) {
         _stateMachine.transitionTo(SyncMachineState.failed);
         _syncStateController.add(SyncStateType.failed);
         _metrics.recordFailure(e.toString());
+        _observerManager
+            .notifySyncFailed(e); // Notify observers
         OfflineLogger.error('Sync failed', error: e);
       } finally {
         _isSyncing = false;
@@ -145,17 +174,127 @@ class OfflineSyncLayer {
   }
 
   Future<void> _pushChanges() async {
-    await _queueManager.processQueue(
-        maxConcurrent: _config.maxConcurrentOperations);
+    final pendingCount =
+        await _queueManager.getPendingCount();
+
+    OfflineLogger.debug(
+        'Pushing local changes to server...');
+    _syncProgressController.add(SyncProgress(
+      current: 0,
+      total: pendingCount,
+      currentOperation: 'Pushing local changes...',
+    ));
+    _observerManager.notifyProgressChanged(
+        0, pendingCount); // Notify observers
+
+    if (pendingCount > 0) {
+      await _queueManager.processQueue(
+          maxConcurrent: _config.maxConcurrentOperations);
+    }
+
+    _observerManager.notifyProgressChanged(
+        pendingCount, pendingCount); // Notify observers
+    OfflineLogger.debug('Push completed');
   }
 
   Future<void> _pullChanges() async {
+    final lastSyncTime = _metrics.lastSyncTime ??
+        DateTime.now().subtract(const Duration(days: 1));
+
     _syncProgressController.add(SyncProgress(
       current: 0,
       total: 0,
-      currentOperation: 'Pulling latest data...',
+      currentOperation: 'Checking for remote changes...',
     ));
-    await Future.delayed(Duration(milliseconds: 500));
+
+    OfflineLogger.debug(
+        'Pulling remote changes since $lastSyncTime');
+
+    // Fetch remote changes from your API
+    final remoteChanges =
+        await _fetchRemoteChanges(lastSyncTime);
+
+    if (remoteChanges.isEmpty) {
+      _syncProgressController.add(SyncProgress(
+        current: 1,
+        total: 1,
+        currentOperation: 'No changes to pull',
+      ));
+      OfflineLogger.debug('No remote changes found');
+      return;
+    }
+
+    final total = remoteChanges.length;
+    var current = 0;
+
+    for (final change in remoteChanges) {
+      current++;
+      _syncProgressController.add(SyncProgress(
+        current: current,
+        total: total,
+        currentOperation:
+            'Syncing ${change['id'] ?? 'item'}',
+      ));
+      _observerManager.notifyProgressChanged(
+          current, total); // Notify observers
+
+      // Get local version
+      final localData = await _getLocalData(
+          change['collection'], change['id']);
+
+      if (localData != null) {
+        // Resolve conflicts
+        OfflineLogger.debug(
+            'Conflict detected for ${change['id']}, resolving...');
+        final resolved = await _conflictResolver.resolve(
+          local: localData,
+          remote: change['data'],
+          strategy: _config.conflictStrategy ??
+              ConflictStrategy.lastWriteWins,
+          localTimestamp: localData['updatedAt'] != null
+              ? DateTime.tryParse(localData['updatedAt'])
+              : null,
+          remoteTimestamp:
+              change['data']['updatedAt'] != null
+                  ? DateTime.tryParse(
+                      change['data']['updatedAt'])
+                  : null,
+        );
+
+        await _applyRemoteData(
+            change['collection'], change['id'], resolved);
+        _observerManager.notifyItemProcessed(
+            change['id'], true); // Notify observers
+      } else {
+        // No conflict, just apply
+        await _applyRemoteData(change['collection'],
+            change['id'], change['data']);
+        _observerManager.notifyItemProcessed(
+            change['id'], true); // Notify observers
+      }
+    }
+
+    OfflineLogger.debug(
+        'Pull completed, synced $total items');
+  }
+
+  // Override these methods based on your backend implementation
+
+  Future<List<Map<String, dynamic>>> _fetchRemoteChanges(
+      DateTime since) async {
+    // TODO: Implement actual API call to fetch changes since timestamp
+    return [];
+  }
+
+  Future<Map<String, dynamic>?> _getLocalData(
+      String collection, String id) async {
+    // TODO: Implement local data retrieval
+    return null;
+  }
+
+  Future<void> _applyRemoteData(String collection,
+      String id, Map<String, dynamic> data) async {
+    // TODO: Implement data application logic
   }
 
   Future<void> submitOperation({
@@ -172,8 +311,8 @@ class OfflineSyncLayer {
       category: category,
       priority: priority,
       data: data,
-      idempotencyKey: idempotencyKey ??
-          IdempotencyKey.generate(), // Now works
+      idempotencyKey:
+          idempotencyKey ?? IdempotencyKey.generate(),
     );
 
     OfflineLogger.info(
@@ -182,7 +321,7 @@ class OfflineSyncLayer {
     if (_connectivityMonitor.isConnected &&
         _config.syncImmediately) {
       await _shouldSyncBasedOnWiFi();
-      sync();
+      unawaited(sync());
     }
   }
 
@@ -200,8 +339,7 @@ class OfflineSyncLayer {
   }
 
   Future<int> getPendingCount() async {
-    final items = await _queueManager.getPendingItems();
-    return items.length;
+    return await _queueManager.getPendingCount();
   }
 
   Future<void> clearQueue() async {
@@ -225,6 +363,7 @@ class OfflineSyncLayer {
   SyncStateMachine get stateMachine => _stateMachine;
   ConnectivityMonitor get connectivityMonitor =>
       _connectivityMonitor;
+  SyncConfig get config => _config;
 
   Future<void> dispose() async {
     await _connectivitySubscription?.cancel();

@@ -1,3 +1,4 @@
+// debug_panel.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
@@ -27,14 +28,14 @@ class _DebugPanelState extends ConsumerState<DebugPanel> {
     final syncStatus = ref.watch(syncStatusTextProvider);
     final isConnected = ref.watch(isConnectedProvider);
 
-    // Use extension properties directly - NOT as constructor
     final pendingItems =
         pendingItemsAsync.valueOrNull ?? [];
     final pendingCount = pendingItems.length;
+    // FIXED: Use AsyncValue extension directly
     final isLoading =
-        AsyncValueExtensions(pendingItemsAsync).isLoading;
+        AsyncValueExtension(pendingItemsAsync).isLoading;
     final hasError =
-        AsyncValueExtensions(pendingItemsAsync).hasError;
+        AsyncValueExtension(pendingItemsAsync).hasError;
     final errorValue = pendingItemsAsync.errorValue;
 
     final hasQueueBreakdown = queueBreakdown.isNotEmpty;
@@ -179,13 +180,14 @@ class _DebugPanelState extends ConsumerState<DebugPanel> {
                                 .read(
                                     offlineSyncLayerProvider)
                                 .getPendingCount();
-                            // ignore: use_build_context_synchronously
-                            ScaffoldMessenger.of(context)
-                                .showSnackBar(
-                              SnackBar(
-                                  content: Text(
-                                      'Refreshed. Pending items: $count')),
-                            );
+                            if (mounted) {
+                              ScaffoldMessenger.of(context)
+                                  .showSnackBar(
+                                SnackBar(
+                                    content: Text(
+                                        'Refreshed. Pending items: $count')),
+                              );
+                            }
                           },
                           child: const Text('Refresh'),
                         ),

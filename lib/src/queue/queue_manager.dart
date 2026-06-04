@@ -1,6 +1,8 @@
+// lib/src/queue/queue_manager.dart
 import 'dart:async';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'queue_item.dart';
+import 'queue_stats.dart';
 import 'hive_registry.dart';
 import 'retry_strategy.dart';
 import '../utils/logger.dart';
@@ -9,6 +11,12 @@ typedef OperationHandler = Future<void> Function(
     Map<String, dynamic> data);
 
 class QueueManager {
+  static final QueueManager _instance =
+      QueueManager._internal();
+  static QueueManager get instance => _instance;
+
+  QueueManager._internal();
+
   static const String _boxName = 'offline_queue';
   late Box<QueueItem> _box;
   bool _isProcessing = false;
@@ -49,7 +57,6 @@ class QueueManager {
       throw Exception('QueueManager not initialized');
     }
 
-    // Check max queue size
     if (_box.length >= _maxQueueSize) {
       OfflineLogger.warning(
           'Queue full, dropping oldest items');
@@ -64,13 +71,12 @@ class QueueManager {
       return;
     }
 
-    final item = QueueItem(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
+    // Use the create factory method from QueueItem
+    final item = QueueItem.create(
       category: category,
       priority: priority,
-      data: Map<String, dynamic>.from(data),
+      data: data,
       idempotencyKey: idempotencyKey,
-      createdAt: DateTime.now(),
     );
 
     await _box.put(item.id, item);
@@ -79,11 +85,19 @@ class QueueManager {
         'Item enqueued: ${item.id} (${item.category})');
   }
 
+  // UPDATED: Better trimming logic
   Future<void> _trimQueue() async {
     final items = _box.values.toList();
     if (items.length >= _maxQueueSize) {
-      items
-          .sort((a, b) => a.priority.compareTo(b.priority));
+      // Sort by priority (lower number = higher priority) and then by creation time
+      items.sort((a, b) {
+        final priorityCompare =
+            a.priority.compareTo(b.priority);
+        if (priorityCompare != 0) return priorityCompare;
+        return a.createdAt.compareTo(b.createdAt);
+      });
+
+      // Keep higher priority items (first half), remove lower priority ones (second half)
       final toRemove = items.sublist(_maxQueueSize ~/ 2);
       for (final item in toRemove) {
         await _box.delete(item.id);
@@ -120,6 +134,57 @@ class QueueManager {
       return a.createdAt.compareTo(b.createdAt);
     });
     return readyItems;
+  }
+
+  Future<int> getPendingCount() async {
+    final items = await getPendingItems();
+    return items.length;
+  }
+
+  // NEW: Get queue statistics
+  Future<QueueStats> getQueueStats() async {
+    final items = _box.values.toList();
+    final now = DateTime.now();
+
+    int failedCount = 0;
+    int retryingCount = 0;
+    DateTime? oldestCreatedAt;
+    final categoryBreakdown = <String, int>{};
+    final priorityBreakdown = <int, int>{};
+
+    for (final item in items) {
+      // Count failed (retryCount > 0 and no nextRetryAt means failed)
+      if (item.retryCount > 0 && item.nextRetryAt == null) {
+        failedCount++;
+      }
+      // Count retrying
+      if (item.nextRetryAt != null &&
+          item.nextRetryAt!.isAfter(now)) {
+        retryingCount++;
+      }
+      // Track oldest
+      if (oldestCreatedAt == null ||
+          item.createdAt.isBefore(oldestCreatedAt)) {
+        oldestCreatedAt = item.createdAt;
+      }
+      // Breakdown by category
+      categoryBreakdown[item.category] =
+          (categoryBreakdown[item.category] ?? 0) + 1;
+      // Breakdown by priority
+      priorityBreakdown[item.priority] =
+          (priorityBreakdown[item.priority] ?? 0) + 1;
+    }
+
+    return QueueStats(
+      pendingCount: items.length,
+      failedCount: failedCount,
+      retryingCount: retryingCount,
+      oldestItemAge: oldestCreatedAt != null
+          ? now.difference(oldestCreatedAt)
+          : Duration.zero,
+      categoryBreakdown: categoryBreakdown,
+      priorityBreakdown: priorityBreakdown,
+    );
   }
 
   Future<void> processQueue({int maxConcurrent = 3}) async {

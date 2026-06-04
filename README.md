@@ -2,7 +2,7 @@
 
 A production-ready offline-first sync engine for Flutter with Riverpod state management, queue orchestration, conflict resolution, Firebase integration, retry handling, connectivity monitoring, and built-in offline UI components.
 
-[![pub version](https://img.shields.io/badge/pub-v0.1.0-blue)](https://pub.dev)
+[![pub version](https://img.shields.io/badge/pub-v1.0.0-blue)](https://pub.dev)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Flutter](https://img.shields.io/badge/Flutter-3.x-blue)](https://flutter.dev)
 
@@ -11,6 +11,7 @@ A production-ready offline-first sync engine for Flutter with Riverpod state man
 ## Table of Contents
 
 - [Features](#-features)
+- [What's New in v1.0.0](#-whats-new-in-v100)
 - [Dependencies](#dependencies)
 - [Quick Start with Firebase](#quick-start-with-firebase)
   - [1. Complete Setup in main()](#1-complete-setup-in-main)
@@ -22,9 +23,13 @@ A production-ready offline-first sync engine for Flutter with Riverpod state man
   - [Firebase Storage Uploads](#firebase-storage-uploads)
   - [Firebase Auth Persistence](#firebase-auth-persistence)
   - [Real-time Firestore + Offline Queue](#real-time-firestore--offline-queue)
+- [New in v1.0.0](#new-in-v100)
+  - [Queue Statistics API](#queue-statistics-api)
+  - [Sync Observer System](#sync-observer-system)
+  - [OfflineSyncScope Widget](#offlinesyncscope-widget)
 - [Complete Service Class Example](#complete-service-class-example)
 - [Complete Todo App Example](#complete-todo-app-example)
-- [Architecture](#%EF%B8%8F-architecture)
+- [Architecture](#️-architecture)
 - [Core Concepts](#core-concepts)
   - [Queue Priorities](#queue-priorities)
   - [Queue Categories](#queue-categories)
@@ -69,13 +74,26 @@ A production-ready offline-first sync engine for Flutter with Riverpod state man
 
 ---
 
+## 🆕 What's New in v1.0.0
+
+- 📊 **Queue Statistics API** — Get detailed queue insights (pending/failed/retrying counts, age, breakdowns)
+- 👁️ **Sync Observer System** — Listen to sync events for analytics and monitoring
+- 🎯 **OfflineSyncScope Widget** — Simplified initialization with loading states
+- 🔧 **Improved Queue Trimming** — Smart priority-based queue management
+- 🆔 **UUID-based IDs** — Better collision prevention for queue items
+- 📈 **Enhanced Progress Tracking** — Percentage-based upload progress
+- 🔌 **Better Connectivity Handling** — Safe disposal and improved WiFi detection
+- 🛡️ **Conflict Detector Ignored Fields** — Skip timestamp fields in conflict detection
+
+---
+
 ## Dependencies
 
 Add the following to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  riverpod_offline_sync: ^0.1.0
+  riverpod_offline_sync: ^1.0.0
   flutter_riverpod: ^2.5.0
   firebase_core: ^2.24.0
   cloud_firestore: ^4.17.0
@@ -396,20 +414,15 @@ Future<void> uploadUserPhoto(File file, String userId) async {
     file: file,
     path: 'uploads/$userId/photo.jpg',
     idempotencyKey: idempotencyKey,
+    onProgress: (percentage) {
+      print('Upload progress: ${(percentage * 100).toStringAsFixed(1)}%');
+    },
   );
 
   // Control the upload
   storageQueue.pauseUpload(idempotencyKey);
   storageQueue.resumeUpload(idempotencyKey);
   storageQueue.cancelUpload(idempotencyKey);
-
-  // Track progress
-  storageQueue.progressStream.listen((progress) {
-    if (progress.key == idempotencyKey) {
-      print('Upload progress: ${progress.percentage}%');
-      print('Uploaded: ${progress.bytesUploaded}/${progress.totalBytes}');
-    }
-  });
 }
 
 // Upload multiple files
@@ -439,6 +452,11 @@ final user = auth.currentUser;
 if (user != null) {
   print('Signed in as: ${user.email}');
 }
+
+// Set persistence type
+await auth.setPersistence(AuthPersistenceType.local);   // Keep logged in
+await auth.setPersistence(AuthPersistenceType.session); // Until app closes
+await auth.setPersistence(AuthPersistenceType.none);    // Never persist
 ```
 
 ---
@@ -546,6 +564,133 @@ class UserListPage extends ConsumerWidget {
 
 ---
 
+## New in v1.0.0
+
+### Queue Statistics API
+
+```dart
+// Get comprehensive queue statistics
+final stats = await queueManager.getQueueStats();
+
+print('Pending: ${stats.pendingCount}');
+print('Failed: ${stats.failedCount}');
+print('Retrying: ${stats.retryingCount}');
+print('Oldest item age: ${stats.oldestItemAge.inMinutes} minutes');
+print('Category breakdown: ${stats.categoryBreakdown}');
+print('Priority breakdown: ${stats.priorityBreakdown}');
+
+// Use with providers
+final statsProvider = FutureProvider<QueueStats>((ref) async {
+  final manager = ref.watch(queueManagerProvider);
+  return await manager.getQueueStats();
+});
+```
+
+### Sync Observer System
+
+```dart
+class MySyncObserver implements SyncObserver {
+  @override
+  void onSyncStarted() {
+    print('Sync started at ${DateTime.now()}');
+  }
+
+  @override
+  void onSyncCompleted() {
+    print('Sync completed successfully');
+  }
+
+  @override
+  void onSyncFailed(Object error) {
+    print('Sync failed: $error');
+    // Send to analytics
+    Analytics.track('sync_failed', {'error': error.toString()});
+  }
+
+  @override
+  void onProgressChanged(int current, int total) {
+    print('Progress: $current/$total');
+    // Update UI progress bar
+  }
+
+  @override
+  void onItemProcessed(String itemId, bool success) {
+    print('Item $itemId processed: ${success ? "success" : "failed"}');
+  }
+}
+
+// Register observer
+final observer = MySyncObserver();
+OfflineSyncLayer.instance.addObserver(observer);
+
+// Don't forget to remove when done
+OfflineSyncLayer.instance.removeObserver(observer);
+
+// Analytics observer example
+class AnalyticsSyncObserver implements SyncObserver {
+  @override
+  void onSyncStarted() {
+    Analytics.trackEvent('sync_started');
+  }
+
+  @override
+  void onSyncCompleted() {
+    Analytics.trackEvent('sync_completed');
+  }
+
+  @override
+  void onSyncFailed(Object error) {
+    Analytics.trackEvent('sync_failed', properties: {
+      'error': error.toString(),
+    });
+  }
+
+  @override
+  void onProgressChanged(int current, int total) {
+    final percentage = (current / total * 100).toStringAsFixed(1);
+    Analytics.trackEvent('sync_progress', properties: {
+      'percentage': percentage,
+      'current': current,
+      'total': total,
+    });
+  }
+}
+```
+
+### OfflineSyncScope Widget
+
+```dart
+void main() {
+  runApp(
+    ProviderScope(
+      child: OfflineSyncScope(
+        config: SyncConfig.defaultConfig(),
+        loadingWidget: Scaffold(
+          body: Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(height: 16),
+                Text('Initializing offline sync...'),
+              ],
+            ),
+          ),
+        ),
+        onInitialized: () {
+          print('Offline sync ready!');
+          // Register handlers after initialization
+          _registerHandlers();
+        },
+        child: MyApp(),
+      ),
+    ),
+  );
+}
+```
+
+---
+
 ## Complete Service Class Example
 
 ```dart
@@ -619,6 +764,10 @@ class OfflineSyncService {
   static Future<int> getPendingCount() async {
     final pending = await OfflineSyncLayer.instance.getPendingOperations();
     return pending.length;
+  }
+
+  static Future<QueueStats> getQueueStats() async {
+    return await OfflineSyncLayer.instance.queueManager.getQueueStats();
   }
 
   static Future<void> clearQueue() async => OfflineSyncLayer.instance.clearQueue();
@@ -910,7 +1059,22 @@ Backend APIs / Firebase
 ```
 lib/
  ├── core/
+ │   ├── sync_layer.dart
+ │   ├── sync_config.dart
+ │   ├── sync_metrics.dart
+ │   ├── sync_progress.dart
+ │   ├── sync_state_machine.dart
+ │   ├── sync_observer.dart        (NEW in v1.0.0)
+ │   └── offline_sync_scope.dart   (NEW in v1.0.0)
  ├── queue/
+ │   ├── queue_manager.dart
+ │   ├── queue_item.dart
+ │   ├── queue_priority.dart
+ │   ├── queue_category.dart
+ │   ├── retry_strategy.dart
+ │   ├── hive_registry.dart
+ │   ├── queue_item_adapter.dart
+ │   └── queue_stats.dart          (NEW in v1.0.0)
  ├── connectivity/
  ├── conflict/
  ├── firebase/
@@ -998,6 +1162,7 @@ final resolved = await resolver.resolve(
 - List merging
 - Duplicate removal
 - Timestamp-based conflict handling
+- Ignored fields support (NEW in v1.0.0)
 
 ---
 
@@ -1066,6 +1231,10 @@ if (OfflineSyncLayer.instance.isInitialized) {
   // Safe to use
 }
 
+// Observer management (NEW in v1.0.0)
+OfflineSyncLayer.instance.addObserver(myObserver);
+OfflineSyncLayer.instance.removeObserver(myObserver);
+
 // Dispose
 await OfflineSyncLayer.instance.dispose();
 ```
@@ -1086,6 +1255,11 @@ await manager.enqueue(
 await manager.processQueue(maxConcurrent: 3);
 
 await manager.retryFailed('item_id');
+
+// Get queue statistics (NEW in v1.0.0)
+final stats = await manager.getQueueStats();
+print('Failed items: ${stats.failedCount}');
+print('Retrying items: ${stats.retryingCount}');
 ```
 
 ### StorageQueue
@@ -1093,22 +1267,20 @@ await manager.retryFailed('item_id');
 ```dart
 final storageQueue = StorageQueue();
 
-// Upload file
+// Upload file with progress (NEW in v1.0.0)
 await storageQueue.uploadFile(
   file: file,
   path: 'uploads/image.jpg',
   idempotencyKey: IdempotencyKey.generate(),
+  onProgress: (percentage) {
+    print('Progress: ${(percentage * 100).toStringAsFixed(1)}%');
+  },
 );
 
 // Control upload
 storageQueue.pauseUpload('key');
 storageQueue.resumeUpload('key');
 storageQueue.cancelUpload('key');
-
-// Track progress
-storageQueue.progressStream.listen((progress) {
-  print('Progress: ${progress.percentage}%');
-});
 ```
 
 ---
@@ -1176,6 +1348,7 @@ const config = SyncConfig(
   enableDebugLogging: false,
   syncOnWiFiOnly: false,
   maxQueueSize: 1000,
+  conflictStrategy: ConflictStrategy.merge, // NEW in v1.0.0
 );
 ```
 
@@ -1338,6 +1511,11 @@ showModalBottomSheet(
 final operations = await OfflineSyncLayer.instance.getPendingOperations();
 print('Pending: ${operations.length}');
 
+// Get queue statistics (NEW in v1.0.0)
+final stats = await OfflineSyncLayer.instance.queueManager.getQueueStats();
+print('Failed: ${stats.failedCount}');
+print('Retrying: ${stats.retryingCount}');
+
 // Get metrics
 final metrics = OfflineSyncLayer.instance.metrics;
 print('Success rate: ${metrics.successRatePercentage}%');
@@ -1355,7 +1533,7 @@ print('Initialized: $isInitialized');
 
 ## Troubleshooting
 
-### ❌ `HiveError: A Hive box with name 'offline_queue' already exists`
+**❌ `HiveError: A Hive box with name 'offline_queue' already exists`**
 
 ```dart
 void main() async {
@@ -1366,14 +1544,14 @@ void main() async {
 }
 ```
 
-### ❌ `Hive has not been initialized`
+**❌ `Hive has not been initialized`**
 
 ```dart
 await Hive.initFlutter();
 await OfflineSyncLayer.instance.initialize();
 ```
 
-### ❌ `No Firebase App '[DEFAULT]' has been created`
+**❌ `No Firebase App '[DEFAULT]' has been created`**
 
 ```dart
 void main() async {
@@ -1384,7 +1562,7 @@ void main() async {
 }
 ```
 
-### ❌ `Firestore persistence enabled too late`
+**❌ `Firestore persistence enabled too late`**
 
 ```dart
 await Firebase.initializeApp();
@@ -1393,7 +1571,7 @@ await FirebaseFirestore.instance.settings =
 await OfflineSyncLayer.instance.initialize();
 ```
 
-### ❌ Queue Stuck Processing
+**❌ Queue Stuck Processing**
 
 ```dart
 // 1. Force sync
@@ -1412,7 +1590,7 @@ if (syncConfig.syncOnWiFiOnly) {
 await OfflineSyncLayer.instance.retryFailedOperation('item_id');
 ```
 
-### ❌ Duplicate Operations
+**❌ Duplicate Operations**
 
 ```dart
 await OfflineSyncLayer.instance.submitOperation(
@@ -1423,7 +1601,7 @@ await OfflineSyncLayer.instance.submitOperation(
 );
 ```
 
-### ❌ `OfflineSyncLayer not initialized`
+**❌ `OfflineSyncLayer not initialized`**
 
 ```dart
 if (OfflineSyncLayer.instance.isInitialized) {
@@ -1431,6 +1609,24 @@ if (OfflineSyncLayer.instance.isInitialized) {
 } else {
   print('Sync layer not ready yet');
 }
+```
+
+**✅ Queue Statistics Not Updating (NEW in v1.0.0)**
+
+```dart
+// Force refresh stats
+final stats = await OfflineSyncLayer.instance.queueManager.getQueueStats();
+
+// Or invalidate provider
+ref.invalidate(pendingItemsCountProvider);
+```
+
+**✅ Observer Not Receiving Events (NEW in v1.0.0)**
+
+```dart
+// Ensure observer is added after initialization
+await OfflineSyncLayer.instance.initialize();
+OfflineSyncLayer.instance.addObserver(myObserver);
 ```
 
 ### Debug Checklist
@@ -1480,6 +1676,9 @@ A: Firebase handles query caching; `riverpod_offline_sync` handles operation que
 **Q: Can I use both together?**
 A: Yes! Use Firestore native offline for reads and `riverpod_offline_sync` for critical writes needing control.
 
+**Q: What's new in v1.0.0?**
+A: Queue statistics API, sync observer system, OfflineSyncScope widget, improved queue trimming, UUID-based IDs, enhanced progress tracking, and better connectivity handling.
+
 ---
 
 ## 🎯 Handler Registration Checklist
@@ -1508,6 +1707,8 @@ A: Yes! Use Firestore native offline for reads and `riverpod_offline_sync` for c
 | Conflict resolution | ❌ Last write wins | ✅ **Multiple strategies** |
 | Retry logic | ✅ Basic | ✅ **Customizable** |
 | Queue inspection | ❌ No | ✅ **Debug panel + metrics** |
+| Queue Statistics | ❌ No | ✅ **Yes (v1.0.0)** |
+| Sync Observers | ❌ No | ✅ **Yes (v1.0.0)** |
 | Idempotency | ❌ Manual | ✅ **Built-in** |
 | Progress tracking | ❌ No | ✅ **Real-time streams** |
 | Upload control | ❌ No | ✅ **Pause/Resume/Cancel** |

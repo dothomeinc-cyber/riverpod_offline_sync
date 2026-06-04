@@ -1,134 +1,185 @@
 # Changelog
 
-## 1.0.3
+## 1.0.4
 
 ### 🚀 New Features
 
-#### Firebase Storage Queue Enhancements
-- Added `StorageQueue` with full upload lifecycle management
-- Added pause/resume/cancel support for Firebase Storage uploads
-- Added real-time upload progress tracking with bytes transferred
-- Added queue-based upload management for large files
-- Added automatic retry for failed uploads with exponential backoff
-- Added upload idempotency to prevent duplicate storage operations
-- Added support for concurrent uploads with configurable limits
+#### Queue Statistics API
+- Added `QueueStats` class with comprehensive queue metrics:
+  - `pendingCount` - Total pending operations
+  - `failedCount` - Permanently failed operations
+  - `retryingCount` - Operations scheduled for retry
+  - `oldestItemAge` - Age of oldest queue item
+  - `categoryBreakdown` - Count by queue category
+  - `priorityBreakdown` - Count by priority level
+- Added `getQueueStats()` method to `QueueManager` for real-time statistics
+- Added queue statistics provider for Riverpod integration
+- Added statistics display in DebugPanel
 
-#### Enhanced Firebase Integration
-- Added complete Firestore CRUD operation handlers (set, update, delete, batch)
-- Added `OfflineFirestoreService` helper class with type-safe methods
-- Added batch write support for atomic Firestore operations
-- Added Firebase Auth persistence for offline authentication
-- Added real-time Firestore stream integration with Riverpod
-- Added conflict resolution strategies for Firestore documents
-- Added timestamp-based conflict detection and merging
+#### Sync Observer System
+- Added `SyncObserver` abstract class with lifecycle callbacks:
+  - `onSyncStarted()` - Sync begins
+  - `onSyncCompleted()` - Sync finishes successfully
+  - `onSyncFailed(Object error)` - Sync fails with error
+  - `onProgressChanged(int current, int total)` - Real-time progress
+  - `onItemProcessed(String itemId, bool success)` - Individual item status
+- Added `SyncObserverManager` for observer registration and notification
+- Added observer support to `OfflineSyncLayer`
+- Added analytics integration example
 
-#### Complete Offline-First Examples
-- Added production-ready Todo app example with full offline support
-- Added real-time data synchronization with Riverpod providers
-- Added queue status indicators (pending count, sync progress)
-- Added manual sync trigger with UI feedback
-- Added offline-first CRUD operations with optimistic updates
-- Added comprehensive error handling and retry UI
+#### OfflineSyncScope Widget
+- Added `OfflineSyncScope` widget for simplified initialization:
+  - Automatic initialization with loading state
+  - Error handling with retry UI
+  - Custom loading widget support
+  - Initialization callback
+  - Proper disposal management
+- Reduced boilerplate code in `main()`
+- Improved user experience during sync layer initialization
 
-#### Improved Handler Registration System
-- Added centralized handler registration pattern for all operations
-- Added type-safe data conversion with `Map<String, dynamic>.from()`
-- Added handler categories for different operation types:
-  - `firestore_set` - Create/set document operations
-  - `firestore_update` - Update document operations
-  - `firestore_delete` - Delete document operations
-  - `firestore_batch` - Batch write operations
-  - `api_request` - Custom REST API calls
-  - `analytics` - Analytics event tracking
-- Added handler registration validation and error handling
+#### Enhanced Conflict Resolution
+- Added ignored fields support to `ConflictDetector`:
+  - Skip timestamp fields (`updatedAt`, `lastSeen`, etc.)
+  - Skip version control fields (`syncVersion`, `_localId`)
+  - Skip cache metadata (`cachedAt`)
+- Configurable ignored fields list
+- Improved performance for large documents
+- Reduced false conflict detections
 
-#### Advanced Queue Management
-- Added queue priority levels for different operation types
-- Added queue category system for better organization
-- Added queue size monitoring with real-time counts
-- Added queue breakdown by category for debugging
-- Added queue persistence verification after app restarts
-- Added queue cleanup utilities for maintenance
+#### Improved Queue Item Identification
+- Replaced timestamp-based IDs with UUID v4:
+  - Better collision prevention
+  - True unique identifiers across devices
+  - No duplicate IDs even in same millisecond
+  - Improved debugging with random IDs
+- Added `QueueItem.create()` factory constructor
+- Backward compatible with existing queue items
+
+#### Enhanced Upload Progress Tracking
+- Changed progress callback from `VoidCallback` to `ValueChanged<double>`:
+  - Receive actual percentage (0.0 to 1.0)
+  - Calculate bytes uploaded from percentage
+  - Better UI progress bars with exact values
+  - Support for multiple concurrent uploads
+- Added progress stream to `StorageQueue`
+- Added upload speed estimation helpers
+
+#### Improved Queue Trimming Logic
+- Smart priority-based queue trimming:
+  - Sorts by priority (critical → background)
+  - Keeps higher priority items
+  - Drops oldest low-priority items first
+  - Prevents accidental deletion of important operations
+- Configurable max queue size (default: 1000)
+- Warning logs when items are dropped
+
+#### Safe Connectivity Disposal
+- Fixed memory leaks in `ConnectivityMonitor`:
+  - Made subscription nullable
+  - Safe cancellation on dispose
+  - No errors if dispose called before initialize
+  - Proper cleanup of resources
+- Added dispose safety checks throughout
 
 ### 🐛 Bug Fixes
 
-#### Firebase Integration Fixes
-- Fixed Firestore persistence initialization order (must be before sync layer)
-- Fixed Firebase Storage upload queue not persisting after app restart
-- Fixed Firebase Auth state not restoring when offline
-- Fixed duplicate Firestore write operations due to missing idempotency
-- Fixed batch write transactions not rolling back on failure
+#### Compilation and Build Issues
+- Fixed `DebugPanel` compile error with `AsyncValueExtensions`
+- Removed incorrect wrapper class usage
+- Fixed direct extension method access
+- Resolved all analysis warnings
 
-#### Queue Processing Fixes
-- Fixed queue stuck in processing state when network drops
-- Fixed retry mechanism not respecting WiFi-only mode
-- Fixed queue items getting lost during hot reload
-- Fixed priority inversion in queue processing order
-- Fixed queue concurrency exceeding configured limits
-- Fixed memory leak in queue stream subscriptions
+#### Queue Processing Issues
+- Fixed queue trimming deleting important items unexpectedly
+- Improved priority-based sorting algorithm
+- Fixed race condition in queue size checking
+- Fixed queue recovery after app crash
 
-#### UI Component Fixes
-- Fixed `ConnectivityBanner` not updating when connectivity changes
-- Fixed `SyncProgressBar` showing incorrect percentages
-- Fixed `OfflineToast` displaying duplicate notifications
-- Fixed `DebugPanel` crash when queue is empty
-- Fixed sync status indicators not updating in real-time
+#### Conflict Resolution Issues
+- Fixed false conflict detection on timestamp fields
+- Added proper DateTime comparison handling
+- Fixed nested map conflict detection
+- Improved list comparison performance
 
-#### Provider Fixes
-- Fixed Riverpod provider initialization race conditions
-- Fixed provider disposal not cleaning up queue streams
-- Fixed `pendingItemsCountProvider` returning stale values
-- Fixed `isSyncingProvider` not reflecting actual sync state
-- Fixed provider state not persisting across widget rebuilds
+#### UI Component Issues
+- Fixed `DebugPanel` crash on empty queue
+- Fixed progress bar percentage calculation
+- Fixed connectivity banner update frequency
+- Fixed sync status indicator positioning
+
+#### Provider Issues
+- Fixed `pendingItemsCountProvider` returning stale data
+- Fixed memory leak in queue stream providers
+- Fixed provider disposal order
+- Improved provider state consistency
 
 ### 🔧 Improvements
 
-#### Documentation Overhaul
-- Added comprehensive README with Firebase offline-first setup
-- Added complete setup guide for `main()` with proper initialization order
-- Added detailed Firebase Storage upload examples with pause/resume/cancel
-- Added complete Todo app walkthrough with code examples
-- Added handler registration checklist for common operations
-- Added package comparison table (Firebase only vs with this package)
-- Added troubleshooting guide for 10+ common issues
-- Added debug checklist for systematic problem-solving
-- Added FAQ section addressing common concerns
-- Added architecture diagram and package structure overview
+#### Documentation Overhaul (Complete)
+- Added comprehensive README with Firebase-first approach:
+  - Firebase quick start guide
+  - Complete Firestore integration examples
+  - Storage upload with pause/resume/cancel
+  - Auth persistence setup
+  - Real-time Firestore + offline queue
+- Added v1.0.0 new features section:
+  - Queue Statistics API documentation
+  - Sync Observer System guide
+  - OfflineSyncScope widget usage
+- Added complete service class examples:
+  - `OfflineFirestoreService`
+  - `OfflineSyncService`
+- Added production-ready Todo app example:
+  - Full offline CRUD operations
+  - Riverpod integration
+  - Real-time sync indicators
+  - Error handling and retry UI
+- Added troubleshooting section with 10+ common issues
+- Added debug checklist for systematic debugging
+- Added package comparison table
+- Added architecture diagram
+- Added FAQ section
 
-#### Code Examples
-- Added `OfflineFirestoreService` complete service class
-- Added `OfflineSyncService` utility class
-- Added `Todo` model with Firestore conversion methods
-- Added `TodoService` with offline CRUD operations
-- Added `TodoListPage` with Riverpod integration
-- Added batch write example for multiple operations
-- Added analytics tracking example
-- Added custom API request example
+#### Code Quality
+- Added comprehensive code comments
+- Improved type safety across all methods
+- Added input validation for public APIs
+- Standardized error messages
+- Added documentation for all public APIs
 
 #### Developer Experience
-- Enhanced error messages with actionable suggestions
-- Added debug logging categories for different subsystems
-- Improved initialization validation and error reporting
-- Added type-safe operation data handling
-- Added automatic idempotency key generation for all operations
-- Added queue inspection utilities for debugging
+- Improved initialization error messages
+- Added initialization state validation
+- Added handler registration verification
+- Added debug logging improvements
+- Added queue inspection utilities
+- Added statistics helpers
 
-#### Performance Optimizations
-- Optimized queue processing with batched operations
-- Reduced memory footprint of queue items
-- Improved upload progress tracking efficiency
-- Optimized Firestore stream subscriptions
-- Reduced unnecessary rebuilds in UI components
+#### Performance
+- Optimized queue sorting algorithm
+- Reduced memory allocation in hot paths
+- Improved conflict detection performance
+- Optimized stream subscriptions
+- Reduced unnecessary rebuilds
 
-### ⚠️ Breaking Changes
+### 📚 Examples Added
 
-#### Initialization Changes
-- **MUST** enable Firestore persistence BEFORE initializing sync layer:
-  ```dart
-  // OLD (incorrect)
-  await OfflineSyncLayer.instance.initialize();
-  await FirebaseFirestore.instance.settings = Settings(persistenceEnabled: true);
-  
-  // NEW (correct)
-  await FirebaseFirestore.instance.settings = Settings(persistenceEnabled: true);
-  await OfflineSyncLayer.instance.initialize();
+#### Complete Firestore Integration
+```dart
+// Full CRUD operations with offline support
+await OfflineFirestoreService.setDocument(
+  collection: 'users',
+  docId: 'user123',
+  data: {'name': 'John', 'email': 'john@example.com'},
+);
+
+await OfflineFirestoreService.updateDocument(
+  collection: 'users',
+  docId: 'user123',
+  updates: {'email': 'john.doe@example.com'},
+);
+
+await OfflineFirestoreService.deleteDocument(
+  collection: 'users',
+  docId: 'user123',
+);

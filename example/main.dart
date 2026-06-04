@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:riverpod_offline_sync/riverpod_offline_sync.dart';
@@ -5,22 +6,12 @@ import 'package:riverpod_offline_sync/riverpod_offline_sync.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Initialize BEFORE app starts - Fixes race condition
+  // Initialize offline sync
   await OfflineSyncInitializer.initialize(
-    config: const SyncConfig(
-      autoSyncOnReconnect: true,
-      syncImmediately: true,
-      maxConcurrentOperations: 3,
-    ),
+    config: SyncConfig.aggressive(),
   );
 
-  // Register handlers
-  OfflineSyncLayer.instance
-      .registerOperationHandler('orders', (data) async {
-    print('Processing order: $data');
-  });
-
-  runApp(const ProviderScope(child: MyApp()));
+  runApp(const MyApp());
 }
 
 class MyApp extends StatelessWidget {
@@ -28,19 +19,64 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Offline Sync Demo',
-      home: ConnectivityBanner(
-        child: OfflineToast(
-          child: Scaffold(
-            appBar: AppBar(
-                title: const Text('Offline Sync Demo')),
-            body: const Center(
-              child: Text('Ready'),
+    return ProviderScope(
+      child: MaterialApp(
+        title: 'Offline Sync Demo',
+        theme: authTheme(),
+        home: const HomePage(),
+      ),
+    );
+  }
+}
+
+class HomePage extends ConsumerWidget {
+  const HomePage({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    // ignore: unused_local_variable
+    final isConnected = ref.watch(isConnectedProvider);
+    // ignore: unused_local_variable
+    final pendingCount =
+        ref.watch(pendingItemsCountProvider);
+
+    return Scaffold(
+      body: ConnectivityBanner(
+        child: Stack(
+          children: [
+            // Your app content here
+            const Center(child: Text('Your App Content')),
+
+            // Status indicators
+            Positioned(
+              top: 10,
+              right: 10,
+              child: SyncStatusIndicator(),
             ),
-          ),
+
+            // Debug panel button (only in debug mode)
+            if (kDebugMode)
+              Positioned(
+                bottom: 20,
+                right: 20,
+                child: FloatingActionButton.small(
+                  onPressed: () {
+                    showModalBottomSheet(
+                      context: context,
+                      isScrollControlled: true,
+                      builder: (_) => const DebugPanel(),
+                    );
+                  },
+                  child: const Icon(Icons.bug_report),
+                ),
+              ),
+          ],
         ),
       ),
     );
+  }
+
+  Widget? ConnectivityBanner({required Stack child}) {
+    return null;
   }
 }

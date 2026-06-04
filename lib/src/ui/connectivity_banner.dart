@@ -5,6 +5,9 @@ import '../providers/connectivity_providers.dart';
 import '../providers/sync_providers.dart';
 import 'auth_theme.dart';
 
+// Remove any export statements from this file
+// This file should ONLY contain the widget definition
+
 class ConnectivityBanner extends ConsumerWidget {
   final Widget child;
   final bool showRetryButton;

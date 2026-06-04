@@ -2,17 +2,16 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:riverpod_offline_sync/src/queue/queue_manager.dart';
 import 'package:riverpod_offline_sync/src/queue/queue_item.dart';
 import 'package:riverpod_offline_sync/src/utils/riverpod_extensions.dart';
+import 'sync_providers.dart';
 
 final queueManagerProvider = Provider<QueueManager>((ref) {
-  final manager = QueueManager();
-  manager.initialize();
-  return manager;
+  return QueueManager.instance;
 });
 
 final pendingItemsProvider =
     StreamProvider<List<QueueItem>>((ref) {
-  final manager = ref.watch(queueManagerProvider);
-  return manager.queueStream;
+  final syncLayer = ref.watch(offlineSyncLayerProvider);
+  return syncLayer.queueManager.queueStream;
 });
 
 final pendingItemsCountProvider = Provider<int>((ref) {

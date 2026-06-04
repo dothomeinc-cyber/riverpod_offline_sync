@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:riverpod_offline_sync/riverpod_offline_sync.dart';
 import 'package:synchronized/synchronized.dart';
 import 'package:riverpod_offline_sync/src/queue/queue_manager.dart';
 import 'package:riverpod_offline_sync/src/connectivity/connectivity_monitor.dart';
@@ -27,7 +28,6 @@ class OfflineSyncLayer {
 
   late QueueManager _queueManager;
   late ConnectivityMonitor _connectivityMonitor;
-  // ignore: unused_field
   late ConflictResolver _conflictResolver;
   late SyncConfig _config;
   late SyncMetrics _metrics;
@@ -50,7 +50,8 @@ class OfflineSyncLayer {
     if (_isInitialized) return;
 
     _config = config ?? SyncConfig.defaultConfig();
-    _queueManager = QueueManager();
+    // FIX: Use the singleton instance, not the constructor
+    _queueManager = QueueManager.instance;
     _connectivityMonitor = ConnectivityMonitor();
     _conflictResolver = ConflictResolver();
     _metrics = SyncMetrics();
@@ -63,7 +64,8 @@ class OfflineSyncLayer {
 
     _setupListeners();
     _isInitialized = true;
-    OfflineLogger.info('OfflineSyncLayer initialized');
+    OfflineLogger.info(
+        'OfflineSyncLayer initialized with config: ${_config.toJson()}');
   }
 
   void _setupListeners() {
@@ -90,7 +92,8 @@ class OfflineSyncLayer {
       final isWifi =
           await _connectivityMonitor.isWifiConnected;
       if (!isWifi) {
-        OfflineLogger.debug('Sync skipped - WiFi only');
+        OfflineLogger.debug(
+            'Sync skipped - WiFi only mode and not on WiFi');
         return false;
       }
     }
@@ -100,8 +103,10 @@ class OfflineSyncLayer {
   Future<void> sync(
       {SyncStrategyType strategy =
           SyncStrategyType.auto}) async {
-    if (!_isInitialized)
+    if (!_isInitialized) {
       throw Exception('Sync layer not initialized');
+    }
+
     if (!await _shouldSyncBasedOnWiFi()) return;
 
     await _syncMutex.synchronized(() async {
@@ -112,13 +117,15 @@ class OfflineSyncLayer {
       _syncStateController.add(SyncStateType.syncing);
 
       try {
-        _stateMachine
-            .transitionTo(SyncMachineState.pulling);
-        await _pushChanges();
+        if (strategy != SyncStrategyType.pullOnly) {
+          _stateMachine
+              .transitionTo(SyncMachineState.pushing);
+          await _pushChanges();
+        }
 
         if (strategy != SyncStrategyType.pushOnly) {
           _stateMachine
-              .transitionTo(SyncMachineState.pushing);
+              .transitionTo(SyncMachineState.pulling);
           await _pullChanges();
         }
 
@@ -127,7 +134,7 @@ class OfflineSyncLayer {
         _syncStateController.add(SyncStateType.completed);
         _metrics.recordSuccess();
         _stateMachine.transitionTo(SyncMachineState.idle);
-        OfflineLogger.info('Sync completed');
+        OfflineLogger.info('Sync completed successfully');
       } catch (e) {
         _stateMachine.transitionTo(SyncMachineState.failed);
         _syncStateController.add(SyncStateType.failed);
@@ -145,12 +152,82 @@ class OfflineSyncLayer {
   }
 
   Future<void> _pullChanges() async {
+    final lastSyncTime = _metrics.lastSyncTime ??
+        DateTime.now().subtract(const Duration(days: 1));
+
     _syncProgressController.add(SyncProgress(
       current: 0,
       total: 0,
-      currentOperation: 'Pulling latest data...',
+      currentOperation: 'Checking for remote changes...',
     ));
-    await Future.delayed(Duration(milliseconds: 500));
+
+    // This would be replaced with actual API call
+    final remoteChanges =
+        await _fetchRemoteChanges(lastSyncTime);
+
+    if (remoteChanges.isEmpty) {
+      _syncProgressController.add(SyncProgress(
+        current: 1,
+        total: 1,
+        currentOperation: 'No changes to pull',
+      ));
+      return;
+    }
+
+    final total = remoteChanges.length;
+    var current = 0;
+
+    for (final change in remoteChanges) {
+      current++;
+      _syncProgressController.add(SyncProgress(
+        current: current,
+        total: total,
+        currentOperation: 'Syncing ${change['id']}',
+      ));
+
+      final localData = await _getLocalData(
+          change['collection'], change['id']);
+
+      if (localData != null) {
+        final resolved = await _conflictResolver.resolve(
+          local: localData,
+          remote: change['data'],
+          strategy: _config.conflictStrategy ??
+              ConflictStrategy.lastWriteWins,
+          localTimestamp: localData['updatedAt'] != null
+              ? DateTime.parse(localData['updatedAt'])
+              : null,
+          remoteTimestamp: change['data']['updatedAt'] !=
+                  null
+              ? DateTime.parse(change['data']['updatedAt'])
+              : null,
+        );
+
+        await _applyRemoteData(
+            change['collection'], change['id'], resolved);
+      } else {
+        await _applyRemoteData(change['collection'],
+            change['id'], change['data']);
+      }
+    }
+  }
+
+  // Placeholder methods - implement based on your backend
+  Future<List<Map<String, dynamic>>> _fetchRemoteChanges(
+      DateTime since) async {
+    // Implement actual API call here
+    return [];
+  }
+
+  Future<Map<String, dynamic>?> _getLocalData(
+      String collection, String id) async {
+    // Implement local data retrieval
+    return null;
+  }
+
+  Future<void> _applyRemoteData(String collection,
+      String id, Map<String, dynamic> data) async {
+    // Implement data application logic
   }
 
   Future<void> submitOperation({
@@ -159,8 +236,9 @@ class OfflineSyncLayer {
     required Map<String, dynamic> data,
     String? idempotencyKey,
   }) async {
-    if (!_isInitialized)
+    if (!_isInitialized) {
       throw Exception('Sync layer not initialized');
+    }
 
     await _queueManager.enqueue(
       category: category,
@@ -170,10 +248,12 @@ class OfflineSyncLayer {
           idempotencyKey ?? IdempotencyKey.generate(),
     );
 
-    OfflineLogger.info('Operation enqueued: $category');
+    OfflineLogger.info(
+        'Operation enqueued: $category (priority: $priority)');
 
     if (_connectivityMonitor.isConnected &&
         _config.syncImmediately) {
+      await _shouldSyncBasedOnWiFi();
       sync();
     }
   }
@@ -181,7 +261,8 @@ class OfflineSyncLayer {
   void registerOperationHandler(String category,
       Future<void> Function(Map<String, dynamic>) handler) {
     _queueManager.registerHandler(category, handler);
-    OfflineLogger.info('Handler registered: $category');
+    OfflineLogger.info(
+        'Handler registered for category: $category');
   }
 
   Future<List<Map<String, dynamic>>>
@@ -202,7 +283,7 @@ class OfflineSyncLayer {
 
   Future<void> retryFailedOperation(String id) async {
     await _queueManager.retryFailed(id);
-    OfflineLogger.info('Retrying: $id');
+    OfflineLogger.info('Retrying operation: $id');
   }
 
   Stream<SyncStateType> get syncState =>

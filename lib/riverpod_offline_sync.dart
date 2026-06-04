@@ -6,6 +6,8 @@ export 'src/core/sync_config.dart';
 export 'src/core/sync_metrics.dart';
 export 'src/core/sync_progress.dart';
 export 'src/core/sync_state_machine.dart';
+export 'src/core/sync_observer.dart'; // NEW
+export 'src/core/offline_sync_scope.dart'; // NEW
 
 // Queue
 export 'src/queue/queue_manager.dart';
@@ -15,6 +17,7 @@ export 'src/queue/queue_category.dart';
 export 'src/queue/retry_strategy.dart';
 export 'src/queue/hive_registry.dart';
 export 'src/queue/queue_item_adapter.dart';
+export 'src/queue/queue_stats.dart'; // NEW
 
 // Connectivity
 export 'src/connectivity/connectivity_monitor.dart';
@@ -35,7 +38,7 @@ export 'src/providers/sync_providers.dart';
 export 'src/providers/queue_providers.dart';
 export 'src/providers/connectivity_providers.dart';
 
-// UI
+// UI Components - These files do NOT export any providers
 export 'src/ui/connectivity_banner.dart';
 export 'src/ui/sync_status_indicator.dart';
 export 'src/ui/sync_progress_bar.dart';
