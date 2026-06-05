@@ -1,11 +1,10 @@
-// debug_panel.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+
 import '../providers/queue_providers.dart';
 import '../providers/sync_providers.dart';
 import '../providers/connectivity_providers.dart';
-import '../utils/riverpod_extensions.dart';
 import 'auth_theme.dart';
 
 class DebugPanel extends ConsumerStatefulWidget {
@@ -28,15 +27,24 @@ class _DebugPanelState extends ConsumerState<DebugPanel> {
     final syncStatus = ref.watch(syncStatusTextProvider);
     final isConnected = ref.watch(isConnectedProvider);
 
-    final pendingItems =
-        pendingItemsAsync.valueOrNull ?? [];
+    final pendingItems = pendingItemsAsync.maybeWhen(
+      data: (items) => items,
+      orElse: () => [],
+    );
+
     final pendingCount = pendingItems.length;
-    // FIXED: Use AsyncValue extension directly
-    final isLoading =
-        AsyncValueExtension(pendingItemsAsync).isLoading;
-    final hasError =
-        AsyncValueExtension(pendingItemsAsync).hasError;
-    final errorValue = pendingItemsAsync.errorValue;
+
+    final isLoading = pendingItemsAsync.maybeWhen(
+      loading: () => true,
+      orElse: () => false,
+    );
+
+    final errorValue = pendingItemsAsync.maybeWhen(
+      error: (error, stackTrace) => error,
+      orElse: () => null,
+    );
+
+    final hasError = errorValue != null;
 
     final hasQueueBreakdown = queueBreakdown.isNotEmpty;
     final breakdownEntries = queueBreakdown.entries;
@@ -45,7 +53,8 @@ class _DebugPanelState extends ConsumerState<DebugPanel> {
       decoration: BoxDecoration(
         color: AuthColors.black.withAlpha(230),
         borderRadius: BorderRadius.vertical(
-            top: Radius.circular(12.r)),
+          top: Radius.circular(12.r),
+        ),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -55,7 +64,8 @@ class _DebugPanelState extends ConsumerState<DebugPanel> {
             decoration: BoxDecoration(
               color: AuthColors.black,
               borderRadius: BorderRadius.vertical(
-                  top: Radius.circular(12.r)),
+                top: Radius.circular(12.r),
+              ),
             ),
             child: Row(
               mainAxisAlignment:
@@ -64,13 +74,16 @@ class _DebugPanelState extends ConsumerState<DebugPanel> {
                 Text(
                   '🔧 Debug Panel',
                   style: TextStyle(
-                      color: AuthColors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 16.sp),
+                    color: AuthColors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16.sp,
+                  ),
                 ),
                 IconButton(
-                  icon: Icon(Icons.close,
-                      color: AuthColors.white),
+                  icon: Icon(
+                    Icons.close,
+                    color: AuthColors.white,
+                  ),
                   onPressed: () => Navigator.pop(context),
                 ),
               ],
@@ -85,10 +98,11 @@ class _DebugPanelState extends ConsumerState<DebugPanel> {
                 children: [
                   _buildSectionHeader('Connection Status'),
                   _buildInfoRow(
-                      'Network Status',
-                      isConnected
-                          ? '🟢 Connected'
-                          : '🔴 Disconnected'),
+                    'Network Status',
+                    isConnected
+                        ? '🟢 Connected'
+                        : '🔴 Disconnected',
+                  ),
                   _buildInfoRow('Sync Status', syncStatus),
                   SizedBox(height: 8.h),
                   _buildSectionHeader('Queue Status'),
@@ -100,14 +114,18 @@ class _DebugPanelState extends ConsumerState<DebugPanel> {
                     _buildInfoRow(
                         'Loading', 'Fetching items...'),
                   if (hasError)
-                    _buildInfoRow('Error', '$errorValue',
-                        isError: true),
+                    _buildInfoRow(
+                      'Error',
+                      '$errorValue',
+                      isError: true,
+                    ),
                   SizedBox(height: 8.h),
                   if (hasQueueBreakdown) ...[
                     _buildSectionHeader('Queue Breakdown'),
-                    ...breakdownEntries.map((e) =>
-                        _buildInfoRow(
-                            '  ${e.key}', '${e.value}')),
+                    ...breakdownEntries.map(
+                      (e) => _buildInfoRow(
+                          '  ${e.key}', '${e.value}'),
+                    ),
                     SizedBox(height: 8.h),
                   ],
                   _buildSectionHeader('Sync Metrics'),
@@ -117,12 +135,16 @@ class _DebugPanelState extends ConsumerState<DebugPanel> {
                       '${metrics.successfulSyncs}'),
                   _buildInfoRow(
                       'Failed', '${metrics.failedSyncs}'),
-                  _buildInfoRow('Success Rate',
-                      metrics.successRatePercentage),
+                  _buildInfoRow(
+                    'Success Rate',
+                    metrics.successRatePercentage,
+                  ),
                   if (metrics.lastError != null)
-                    _buildInfoRow('Last Error',
-                        '${metrics.lastError}',
-                        isError: true),
+                    _buildInfoRow(
+                      'Last Error',
+                      '${metrics.lastError}',
+                      isError: true,
+                    ),
                   SizedBox(height: 12.h),
                   Row(
                     children: [
@@ -133,16 +155,18 @@ class _DebugPanelState extends ConsumerState<DebugPanel> {
                                 .read(
                                     offlineSyncLayerProvider)
                                 .clearQueue();
+
                             ref.invalidate(
                                 pendingItemsProvider);
                             ref.invalidate(
                                 queueBreakdownProvider);
-                            setState(() {});
+
+                            if (mounted) setState(() {});
                           },
                           style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.red,
-                              foregroundColor:
-                                  Colors.white),
+                            backgroundColor: Colors.red,
+                            foregroundColor: Colors.white,
+                          ),
                           child: const Text('Clear Queue'),
                         ),
                       ),
@@ -154,7 +178,8 @@ class _DebugPanelState extends ConsumerState<DebugPanel> {
                                 .read(
                                     offlineSyncLayerProvider)
                                 .sync();
-                            setState(() {});
+
+                            if (mounted) setState(() {});
                           },
                           child: const Text('Force Sync'),
                         ),
@@ -175,17 +200,22 @@ class _DebugPanelState extends ConsumerState<DebugPanel> {
                                 pendingItemsCountProvider);
                             ref.invalidate(
                                 syncMetricsProvider);
-                            setState(() {});
+
+                            if (mounted) setState(() {});
+
                             final count = await ref
                                 .read(
                                     offlineSyncLayerProvider)
                                 .getPendingCount();
+
                             if (mounted) {
                               ScaffoldMessenger.of(context)
                                   .showSnackBar(
                                 SnackBar(
-                                    content: Text(
-                                        'Refreshed. Pending items: $count')),
+                                  content: Text(
+                                    'Refreshed. Pending items: $count',
+                                  ),
+                                ),
                               );
                             }
                           },
@@ -217,23 +247,31 @@ class _DebugPanelState extends ConsumerState<DebugPanel> {
       child: Text(
         title,
         style: TextStyle(
-            color: AuthColors.yellow,
-            fontWeight: FontWeight.bold,
-            fontSize: 14.sp),
+          color: AuthColors.yellow,
+          fontWeight: FontWeight.bold,
+          fontSize: 14.sp,
+        ),
       ),
     );
   }
 
-  Widget _buildInfoRow(String label, String value,
-      {bool isError = false}) {
+  Widget _buildInfoRow(
+    String label,
+    String value, {
+    bool isError = false,
+  }) {
     return Padding(
       padding: EdgeInsets.symmetric(vertical: 4.h),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label,
-              style: TextStyle(
-                  color: Colors.white70, fontSize: 12.sp)),
+          Text(
+            label,
+            style: TextStyle(
+              color: Colors.white70,
+              fontSize: 12.sp,
+            ),
+          ),
           Expanded(
             child: Text(
               value,

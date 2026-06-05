@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.0.4
+## 1.0.5
 
 ### 🚀 New Features
 
@@ -122,7 +122,7 @@
   - Storage upload with pause/resume/cancel
   - Auth persistence setup
   - Real-time Firestore + offline queue
-- Added v1.0.0 new features section:
+- Added v1.0.5 new features section:
   - Queue Statistics API documentation
   - Sync Observer System guide
   - OfflineSyncScope widget usage

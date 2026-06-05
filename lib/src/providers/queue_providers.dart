@@ -1,7 +1,7 @@
+// queue_providers.dart
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:riverpod_offline_sync/src/queue/queue_manager.dart';
 import 'package:riverpod_offline_sync/src/queue/queue_item.dart';
-import 'package:riverpod_offline_sync/src/utils/riverpod_extensions.dart';
 import 'sync_providers.dart';
 
 final queueManagerProvider = Provider<QueueManager>((ref) {
@@ -16,14 +16,21 @@ final pendingItemsProvider =
 
 final pendingItemsCountProvider = Provider<int>((ref) {
   final itemsAsync = ref.watch(pendingItemsProvider);
-  final items = itemsAsync.valueOrNull;
-  return items?.length ?? 0;
+  final items = itemsAsync.maybeWhen(
+    data: (value) => value,
+    orElse: () => <QueueItem>[],
+  );
+  return items.length;
 });
 
 final queueBreakdownProvider =
     Provider<Map<String, int>>((ref) {
   final itemsAsync = ref.watch(pendingItemsProvider);
-  final items = itemsAsync.valueOrNull ?? [];
+  final items = itemsAsync.maybeWhen(
+    data: (value) => value,
+    orElse: () => <QueueItem>[],
+  );
+
   final breakdown = <String, int>{};
   for (final item in items) {
     breakdown[item.category] =

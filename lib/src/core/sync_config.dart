@@ -1,4 +1,4 @@
-// sync_config.dart - Already has conflictStrategy, ensure it's complete
+// sync_config.dart
 import '../conflict/conflict_strategy.dart';
 
 class SyncConfig {

@@ -36,15 +36,25 @@ class QueueManager {
     HiveRegistry.ensureRegistered();
     _box = await Hive.openBox<QueueItem>(_boxName);
     _isInitialized = true;
+
+    // Emit initial state
+    await _emitCurrentQueueState();
+
     OfflineLogger.info(
         'QueueManager initialized with max size: $_maxQueueSize');
   }
 
+  /// Register a handler for a specific category
   void registerHandler(
       String category, OperationHandler handler) {
     _handlers[category] = handler;
     OfflineLogger.debug(
         'Handler registered for: $category');
+  }
+
+  Future<void> _emitCurrentQueueState() async {
+    final items = await getPendingItems();
+    _queueStreamController.add(items);
   }
 
   Future<void> enqueue({
@@ -71,7 +81,6 @@ class QueueManager {
       return;
     }
 
-    // Use the create factory method from QueueItem
     final item = QueueItem.create(
       category: category,
       priority: priority,
@@ -80,16 +89,14 @@ class QueueManager {
     );
 
     await _box.put(item.id, item);
-    _queueStreamController.add(await getPendingItems());
+    await _emitCurrentQueueState();
     OfflineLogger.debug(
         'Item enqueued: ${item.id} (${item.category})');
   }
 
-  // UPDATED: Better trimming logic
   Future<void> _trimQueue() async {
     final items = _box.values.toList();
     if (items.length >= _maxQueueSize) {
-      // Sort by priority (lower number = higher priority) and then by creation time
       items.sort((a, b) {
         final priorityCompare =
             a.priority.compareTo(b.priority);
@@ -97,7 +104,6 @@ class QueueManager {
         return a.createdAt.compareTo(b.createdAt);
       });
 
-      // Keep higher priority items (first half), remove lower priority ones (second half)
       final toRemove = items.sublist(_maxQueueSize ~/ 2);
       for (final item in toRemove) {
         await _box.delete(item.id);
@@ -141,7 +147,6 @@ class QueueManager {
     return items.length;
   }
 
-  // NEW: Get queue statistics
   Future<QueueStats> getQueueStats() async {
     final items = _box.values.toList();
     final now = DateTime.now();
@@ -153,24 +158,19 @@ class QueueManager {
     final priorityBreakdown = <int, int>{};
 
     for (final item in items) {
-      // Count failed (retryCount > 0 and no nextRetryAt means failed)
       if (item.retryCount > 0 && item.nextRetryAt == null) {
         failedCount++;
       }
-      // Count retrying
       if (item.nextRetryAt != null &&
           item.nextRetryAt!.isAfter(now)) {
         retryingCount++;
       }
-      // Track oldest
       if (oldestCreatedAt == null ||
           item.createdAt.isBefore(oldestCreatedAt)) {
         oldestCreatedAt = item.createdAt;
       }
-      // Breakdown by category
       categoryBreakdown[item.category] =
           (categoryBreakdown[item.category] ?? 0) + 1;
-      // Breakdown by priority
       priorityBreakdown[item.priority] =
           (priorityBreakdown[item.priority] ?? 0) + 1;
     }
@@ -227,7 +227,7 @@ class QueueManager {
 
       await handler(item.data);
       await _box.delete(item.id);
-      _queueStreamController.add(await getPendingItems());
+      await _emitCurrentQueueState();
       OfflineLogger.debug(
           'Item processed successfully: ${item.id}');
     } catch (e) {
@@ -241,10 +241,12 @@ class QueueManager {
             _retryStrategy.getDelay(item.retryCount);
         item.nextRetryAt = DateTime.now().add(delay);
         await _box.put(item.id, item);
+        await _emitCurrentQueueState();
         OfflineLogger.warning(
             'Item ${item.id} failed, retry ${item.retryCount} scheduled in ${delay.inSeconds}s');
       } else {
         await _box.delete(item.id);
+        await _emitCurrentQueueState();
         OfflineLogger.error(
             'Item ${item.id} dropped after ${item.retryCount} retries',
             error: e);
@@ -260,13 +262,14 @@ class QueueManager {
       item.retryCount = 0;
       item.nextRetryAt = null;
       await _box.put(id, item);
+      await _emitCurrentQueueState();
       await processItem(item);
     }
   }
 
   Future<void> clearQueue() async {
     await _box.clear();
-    _queueStreamController.add([]);
+    await _emitCurrentQueueState();
     OfflineLogger.info('Queue cleared');
   }
 

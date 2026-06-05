@@ -1,4 +1,6 @@
+// sync_providers.dart
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:riverpod_offline_sync/riverpod_offline_sync.dart';
 import 'package:riverpod_offline_sync/src/core/sync_layer.dart';
 import 'package:riverpod_offline_sync/src/core/sync_metrics.dart';
 import 'package:riverpod_offline_sync/src/core/sync_progress.dart';
@@ -33,7 +35,7 @@ final syncMetricsProvider = Provider<SyncMetrics>((ref) {
 
 final syncStatusTextProvider = Provider<String>((ref) {
   final syncState = ref.watch(syncStateProvider);
-  final syncStateValue = syncState.valueOrNull;
+  final syncStateValue = syncState.valueOrNull; // Built-in
   if (syncStateValue == SyncStateType.syncing) {
     return 'Syncing...';
   }

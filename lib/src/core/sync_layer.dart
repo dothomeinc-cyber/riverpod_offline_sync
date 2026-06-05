@@ -2,19 +2,6 @@
 import 'dart:async';
 import 'package:riverpod_offline_sync/riverpod_offline_sync.dart';
 import 'package:synchronized/synchronized.dart';
-import 'package:riverpod_offline_sync/src/queue/queue_manager.dart';
-import 'package:riverpod_offline_sync/src/connectivity/connectivity_monitor.dart';
-import 'package:riverpod_offline_sync/src/core/sync_config.dart';
-import 'package:riverpod_offline_sync/src/core/sync_metrics.dart';
-import 'package:riverpod_offline_sync/src/core/sync_progress.dart';
-import 'package:riverpod_offline_sync/src/core/sync_state_machine.dart';
-import 'package:riverpod_offline_sync/src/conflict/conflict_resolver.dart';
-import 'package:riverpod_offline_sync/src/utils/idempotency_key.dart';
-import 'package:riverpod_offline_sync/src/utils/logger.dart';
-
-// Import the observer from a separate file to avoid duplication
-// If you haven't created the separate file yet, we'll define it conditionally
-export 'sync_observer.dart';
 
 enum SyncStateType { idle, syncing, completed, failed }
 
@@ -37,8 +24,6 @@ class OfflineSyncLayer {
   late SyncConfig _config;
   late SyncMetrics _metrics;
   late SyncStateMachine _stateMachine;
-
-  // Add observer manager
   late SyncObserverManager _observerManager;
 
   final _syncStateController =
@@ -63,8 +48,7 @@ class OfflineSyncLayer {
     _conflictResolver = ConflictResolver();
     _metrics = SyncMetrics();
     _stateMachine = SyncStateMachine();
-    _observerManager =
-        SyncObserverManager(); // Initialize observer manager
+    _observerManager = SyncObserverManager();
 
     await _queueManager.initialize(
         maxQueueSize: _config.maxQueueSize);
@@ -77,7 +61,6 @@ class OfflineSyncLayer {
         'OfflineSyncLayer initialized with config: ${_config.toJson()}');
   }
 
-  // Observer management methods
   void addObserver(SyncObserver observer) {
     _observerManager.addObserver(observer);
   }
@@ -131,41 +114,35 @@ class OfflineSyncLayer {
       if (_isSyncing) return;
 
       _isSyncing = true;
-      _observerManager
-          .notifySyncStarted(); // Notify observers
+      _observerManager.notifySyncStarted();
       _stateMachine.transitionTo(SyncMachineState.checking);
       _syncStateController.add(SyncStateType.syncing);
 
       try {
-        // Push phase
         if (strategy != SyncStrategyType.pullOnly) {
           _stateMachine
               .transitionTo(SyncMachineState.pushing);
           await _pushChanges();
         }
 
-        // Pull phase
         if (strategy != SyncStrategyType.pushOnly) {
           _stateMachine
               .transitionTo(SyncMachineState.pulling);
           await _pullChanges();
         }
 
-        // Complete
         _stateMachine
             .transitionTo(SyncMachineState.completing);
         _syncStateController.add(SyncStateType.completed);
         _metrics.recordSuccess();
         _stateMachine.transitionTo(SyncMachineState.idle);
-        _observerManager
-            .notifySyncCompleted(); // Notify observers
+        _observerManager.notifySyncCompleted();
         OfflineLogger.info('Sync completed successfully');
       } catch (e) {
         _stateMachine.transitionTo(SyncMachineState.failed);
         _syncStateController.add(SyncStateType.failed);
         _metrics.recordFailure(e.toString());
-        _observerManager
-            .notifySyncFailed(e); // Notify observers
+        _observerManager.notifySyncFailed(e);
         OfflineLogger.error('Sync failed', error: e);
       } finally {
         _isSyncing = false;
@@ -184,8 +161,7 @@ class OfflineSyncLayer {
       total: pendingCount,
       currentOperation: 'Pushing local changes...',
     ));
-    _observerManager.notifyProgressChanged(
-        0, pendingCount); // Notify observers
+    _observerManager.notifyProgressChanged(0, pendingCount);
 
     if (pendingCount > 0) {
       await _queueManager.processQueue(
@@ -193,11 +169,17 @@ class OfflineSyncLayer {
     }
 
     _observerManager.notifyProgressChanged(
-        pendingCount, pendingCount); // Notify observers
+        pendingCount, pendingCount);
     OfflineLogger.debug('Push completed');
   }
 
   Future<void> _pullChanges() async {
+    // Add connectivity check to avoid unnecessary work
+    if (!_connectivityMonitor.isConnected) {
+      OfflineLogger.debug('Pull skipped - device offline');
+      return;
+    }
+
     final lastSyncTime = _metrics.lastSyncTime ??
         DateTime.now().subtract(const Duration(days: 1));
 
@@ -210,7 +192,6 @@ class OfflineSyncLayer {
     OfflineLogger.debug(
         'Pulling remote changes since $lastSyncTime');
 
-    // Fetch remote changes from your API
     final remoteChanges =
         await _fetchRemoteChanges(lastSyncTime);
 
@@ -236,14 +217,12 @@ class OfflineSyncLayer {
             'Syncing ${change['id'] ?? 'item'}',
       ));
       _observerManager.notifyProgressChanged(
-          current, total); // Notify observers
+          current, total);
 
-      // Get local version
       final localData = await _getLocalData(
           change['collection'], change['id']);
 
       if (localData != null) {
-        // Resolve conflicts
         OfflineLogger.debug(
             'Conflict detected for ${change['id']}, resolving...');
         final resolved = await _conflictResolver.resolve(
@@ -264,13 +243,12 @@ class OfflineSyncLayer {
         await _applyRemoteData(
             change['collection'], change['id'], resolved);
         _observerManager.notifyItemProcessed(
-            change['id'], true); // Notify observers
+            change['id'], true);
       } else {
-        // No conflict, just apply
         await _applyRemoteData(change['collection'],
             change['id'], change['data']);
         _observerManager.notifyItemProcessed(
-            change['id'], true); // Notify observers
+            change['id'], true);
       }
     }
 
@@ -279,7 +257,6 @@ class OfflineSyncLayer {
   }
 
   // Override these methods based on your backend implementation
-
   Future<List<Map<String, dynamic>>> _fetchRemoteChanges(
       DateTime since) async {
     // TODO: Implement actual API call to fetch changes since timestamp
