@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.6
+- Addes screen util 
+
+
 ## 1.0.5
 
 ### 🚀 New Features

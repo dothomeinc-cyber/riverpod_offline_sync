@@ -1,24 +1,19 @@
 // sync_providers.dart
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:riverpod_offline_sync/riverpod_offline_sync.dart';
 import 'package:riverpod_offline_sync/src/core/sync_layer.dart';
 import 'package:riverpod_offline_sync/src/core/sync_metrics.dart';
 import 'package:riverpod_offline_sync/src/core/sync_progress.dart';
-import 'package:riverpod_offline_sync/src/utils/riverpod_extensions.dart';
 
-final offlineSyncLayerProvider =
-    Provider<OfflineSyncLayer>((ref) {
+final offlineSyncLayerProvider = Provider<OfflineSyncLayer>((ref) {
   return OfflineSyncLayer.instance;
 });
 
-final syncStateProvider =
-    StreamProvider<SyncStateType>((ref) {
+final syncStateProvider = StreamProvider<SyncStateType>((ref) {
   final syncLayer = ref.watch(offlineSyncLayerProvider);
   return syncLayer.syncState;
 });
 
-final syncProgressProvider =
-    StreamProvider<SyncProgress?>((ref) {
+final syncProgressProvider = StreamProvider<SyncProgress?>((ref) {
   final syncLayer = ref.watch(offlineSyncLayerProvider);
   return syncLayer.syncProgress;
 });
@@ -35,7 +30,11 @@ final syncMetricsProvider = Provider<SyncMetrics>((ref) {
 
 final syncStatusTextProvider = Provider<String>((ref) {
   final syncState = ref.watch(syncStateProvider);
-  final syncStateValue = syncState.valueOrNull; // Built-in
+  final syncStateValue = syncState.maybeWhen(
+    data: (value) => value,
+    orElse: () => null,
+  );
+  
   if (syncStateValue == SyncStateType.syncing) {
     return 'Syncing...';
   }
